@@ -1,0 +1,87 @@
+---
+title: "Untitled3"
+author: "Telha H. Rehman"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+## PACKAGES
+```{r , message=FALSE}
+
+
+library(tidyverse)
+library(nlme)
+library(nlstools)
+
+#I think thats all you need, but I may have missed one
+
+```
+
+## DATA
+```{r}
+
+paper3_data <- read_csv(file = "DATA/paper3_data.csv")
+
+paper3_gsdata <- paper3_data %>% 
+  filter(Platform == "GreenSeeker NDVI")
+
+paper3_uas_ndvi_data <- paper3_data %>% 
+  filter(Platform == "sUAS NDVI")
+
+paper3_uas_ndre_data <- paper3_data %>% 
+  filter(Platform == "sUAS NDRE")
+
+```
+
+## MODEL
+```{r}
+
+fit.lm1    <- lm(GrainYield_Mgha ~ PI_N_Uptake, data= paper3_gsdata)
+
+a.ini1     <- fit.lm1$coefficients[1]
+b.ini1     <- fit.lm1$coefficients[2]
+clx.ini1   <- mean(paper3_gsdata$PI_N_Uptake)
+
+quadplat <- function(x, a, b, clx) {
+           ifelse(x  < clx, a + b * x   + (-0.5*b/clx) * x   * x,
+                            a + b * clx + (-0.5*b/clx) * clx * clx)}
+
+model1 <- nls(GrainYield_Mgha ~ quadplat(PI_N_Uptake, a, b, clx),
+            data = paper3_gsdata,
+            start = list(a   = a.ini1,
+                         b   = b.ini1,
+                         clx = clx.ini1),
+             trace = FALSE,
+             nls.control(maxiter = 1000))
+
+a.ini1     <- summary(model1)$coefficients[1]
+b.ini1     <- summary(model1)$coefficients[2]
+c.ini1     <- summary(model1)$coefficients[3]
+
+
+quadratic.plateau <- function(x, a, b, c)
+  {
+    ifelse(x < -b/(2 * c), 
+           a + b*x + c*x*x,
+           a - b^2/(4 * c))
+  }
+
+model1_nlme <- nlme(GrainYield_Mgha ~ quadratic.plateau(PI_N_Uptake,a,b,c), 
+                   fixed = list(a ~ 1, b ~ 1, c ~ 1),
+                   random = I(a + b + c) ~ 1|site_year,
+                   start = c(a = a.ini1,
+                              b = b.ini1,
+                              c = clx.ini1),
+                   weights=varIdent(form=~1|site_year),
+                   data = paper3_gsdata,
+                   method = "ML") #code breaks
+
+
+```

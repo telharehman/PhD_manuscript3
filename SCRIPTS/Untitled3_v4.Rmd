@@ -1,0 +1,5585 @@
+---
+title: "Untitled3"
+author: "Telha H. Rehman"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+# START
+
+```{r}
+Sys.time()
+```
+
+```{r, echo = FALSE}
+
+library(knitr)
+
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+knitr::opts_knit$set(root.dir = "~/Desktop/Ph.D. Horticulture and Agronomy/PhD_manuscript3/R_project/PhD_manuscript3")
+```
+
+```{r , message=FALSE}
+
+library(tinytex)
+library(ggplot2)
+library(tidyverse)
+library(cowplot)
+library(Cairo)
+library(modelr)
+library(gridExtra)
+library(mixtools)
+library(nlme)
+library(car)
+library(emmeans)
+library(MuMIn)
+library(ggpmisc)
+library(gridExtra)
+library(gtable)
+library(grid)
+library(RColorBrewer)
+library(segmented)
+library(data.table)
+library(scales)
+library(sm)
+
+```
+
+#DATA
+
+##GreenSeeker NDVI Data
+
+```{r}
+
+gs_ndvi_data <- read_csv(file = "DATA/PI_greenseeker_data.csv")
+
+str(gs_ndvi_data , give.attr = FALSE)
+
+gs_ndvi_data <- gs_ndvi_data %>% 
+  filter(!year %in% c("2015" , "2016"),
+         N_level_kgha != 275) #remove the years we don't need for this analysis and also the N rate that is too high 
+
+str(gs_ndvi_data , give.attr = FALSE)
+
+gs_ndvi_data <- gs_ndvi_data[c(1:240), c(1:17)] #removes the empty rows and columns from the data frame
+
+gs_ndvi_data$block <- factor(gs_ndvi_data$block) 
+gs_ndvi_data$year <- factor(gs_ndvi_data$year)
+gs_ndvi_data$plot <- factor(gs_ndvi_data$plot) 
+gs_ndvi_data$N_level_kgha_f <- factor(gs_ndvi_data$N_level_kgha)
+gs_ndvi_data$exp_plot_number <- factor(gs_ndvi_data$exp_plot_number)
+gs_ndvi_data$site_year <- factor(gs_ndvi_data$site_year , levels = c( "Nicolaus-17" , "Williams-17" , "Arbuckle-18" , "Biggs-18" , "Marysville-18" , "Nicolaus-18" , "Arbuckle-19" , "Davis-19" , "Marysville-19" , "RES-19" ))
+gs_ndvi_data$NDVI_1 <- as.numeric(as.character(gs_ndvi_data$NDVI_1))
+gs_ndvi_data$NDVI_2 <- as.numeric(as.character(gs_ndvi_data$NDVI_2))
+gs_ndvi_data$NDVI_3 <- as.numeric(as.character(gs_ndvi_data$NDVI_3))
+gs_ndvi_data$NDVI_4 <- as.numeric(as.character(gs_ndvi_data$NDVI_4)) #gets the data right
+
+str(gs_ndvi_data , give.attr = FALSE)
+
+gs_ndvi_data <-  gs_ndvi_data %>% 
+  mutate( biomass_dry_wt = biomass_plus_bag_g - (paper_bag_g * num_of_paper_bags) ,
+          aboveground_biomass = (biomass_dry_wt / ring_size) * 10 ,
+          n_content = sample_N_ug / sample_weight_mg ,
+          PI_N_Uptake = (aboveground_biomass * n_content) / 1000 #n uptake in kg per ha
+          )#processes the data
+
+
+gs_ndvi_data <- gs_ndvi_data %>% 
+  rowwise() %>% 
+  mutate(NDVI = mean(c( NDVI_1 , NDVI_2 , NDVI_3 , NDVI_4) , na.rm = T)) #takes average of four NDVI readings
+
+gs_ndvi_data <- dplyr::select(gs_ndvi_data ,
+                      site_year,
+                      year,
+                      exp_plot_number,
+                      block,
+                      plot,
+                      N_level_kgha,
+                      aboveground_biomass,
+                      n_content,
+                      PI_N_Uptake,
+                      NDVI) #selects the relevant columns
+
+gs_ndvi_data$site_year <- factor(gs_ndvi_data$site_year , levels = c( "Nicolaus-17" , "Williams-17" , "Arbuckle-18" , "Biggs-18" , "Marysville-18" , "Nicolaus-18" , "Arbuckle-19" , "Davis-19" , "Marysville-19" , "RES-19")) #orders site-years alphabetically
+
+gs_ndvi_data$NDVI <- round(gs_ndvi_data$NDVI , digits = 2) #rounds to the precision of the instrument
+
+hist(gs_ndvi_data$aboveground_biomass)
+hist(gs_ndvi_data$n_content)
+hist(gs_ndvi_data$PI_N_Uptake)
+```
+
+## Yield Data
+```{r}
+
+yield_data <- read_csv(file = "DATA/yield_data.csv")
+
+str(yield_data , give.attr = FALSE)
+
+yield_data <- yield_data %>% 
+  filter(!year %in% c( "2016"),
+         N_level != "275") #removing the years and  N rate to match with NDVI data
+
+yield_data <- yield_data %>% 
+  mutate(
+    site_year = factor(site_year),
+    year = factor(year),
+    Block = factor(Block),
+    MainPlot = factor(MainPlot),
+    exp_plot_number = factor(exp_plot_number),
+    N_level = factor(N_level),
+    SubPlot = factor(SubPlot),
+    TopDress = factor(TopDress),
+    SeasonalNRate_f = factor(SeasonalNRate),
+    N_level_kgha_f = factor(N_level_kgha),
+    TopDress_kgha_f = factor(TopDress_kgha),
+    SeasonalNRate_kgha_f = factor(SeasonalNRate_kgha)
+    ) #changes these columns to factor
+
+str(yield_data , give.attr = FALSE)
+
+yield_data <- yield_data %>% 
+  mutate(
+    FW1net = FW1PlusTare - tare,
+    FW2net = FW2PlusTare - tare,
+    TotalFW = FW1net + FW2net,
+    SSFWnet = SSFWPlusTare - tare,
+    Ratio = SSFWnet / TotalFW, 
+    SSODWnet = SSODW - HarvestBagPlusTie, 
+    SeedTray1 = SeedTray1.1 + SeedTray1.2, #adds the decimal to the 243g to get the tare weight for the seedtray
+    Grain3net = Grain3PlusSeedTray1 - SeedTray1, #subtract tare of seed tray from grain3. Grain3 is the reweighed sample value
+    Grain4net = Grain4PlusSeedTray2 - SeedTray2, #grain4 is the amount of grain removed for ballmilling. this value came from another excel sheet
+    Grain2net = Grain2PlusPaperBag2 - PaperBag2, #yield component grain sample
+    Grain2net = Grain2net * Ratio, #this essentially subsamples the yield component grain sample
+    GrainNet = Grain3net + Grain4net + Grain2net, #add the grain removed for ball milling and yield component back to the reweighed grain sample
+    GrainRing = GrainNet / Ratio, #the amount of grain in the entire m^2 ring in grams
+    GrainYield = GrainRing * 10, #g/m^2 to kg/ha
+    GrainYield_kgha = GrainYield * ((100-MoistureContentGrain3)/86),#corrects for 14% moisture based on the moisture content readings from grain reweighing. values came from another excel sheet
+    GrainYield_Mgha = GrainYield_kgha / 1000 , #converts kg/ha to Mg/ha
+    Grain5 = GrainRing * ((100-MoistureContentGrain3)/98.1), #grain in the ring if the subsample was at 1.9% moisture
+    Grain6 = GrainNet * ((100-MoistureContentGrain3)/98.1), #grain in the subsample if it was at 1.9% moisture
+    StrawSS = SSODWnet - Grain6 , #just straw in subsample in grams 
+    StrawRing = StrawSS / Ratio, #straw in ring in grams i.e g/m2
+    StrawNcon = StrawN / StrawSampleSize,
+    StrawNup = (StrawRing * StrawNcon) / 100, #straw Nup divide by 100 to convert mg/m2 to kg/ha - this is correct
+    GrainNcon = (GrainN / GrainSampleSize), #grain in ring in kg/ha
+    GrainNup = (Grain5 * GrainNcon) / 100, #grain Nup divide by 100 to convert mg N/m2 to kg N/ha
+    TotalSeasonalNup = StrawNup + GrainNup, #in kg/ha
+    HarvestIndex = Grain5 / (Grain5 + StrawRing),
+    Moisture = SSFWnet / SSODWnet
+    )
+
+boxplot(yield_data$GrainYield_Mgha)
+hist(yield_data$GrainYield_Mgha)
+
+boxplot(yield_data$HarvestIndex)
+hist(yield_data$HarvestIndex)
+
+boxplot(yield_data$Moisture)
+hist(yield_data$Moisture)
+
+```
+
+```{r}
+
+#the data looks good - don't see any unusual values
+
+
+yield_data <- dplyr::select(yield_data,
+                               site_year,
+                               year,
+                               Block,
+                               MainPlot,
+                               SubPlot,
+                               exp_plot_number,
+                               N_level_kgha,
+                               N_level_kgha_f,
+                               TopDress_kgha, 
+                               TopDress_kgha_f,
+                               GrainYield_Mgha
+                               )
+           
+
+gs_data <- full_join(gs_ndvi_data , yield_data)
+
+gs_data <- dplyr::select(gs_data, 
+               site_year, 
+               year, 
+               exp_plot_number, 
+               Block, 
+               MainPlot, 
+               SubPlot,
+               N_level_kgha,
+               N_level_kgha_f,
+               TopDress_kgha, 
+               TopDress_kgha_f , 
+               PI_N_Uptake, 
+               NDVI, 
+               GrainYield_Mgha) #reorders the columns
+
+gs_data$site_year <- as.factor(gs_data$site_year)
+
+str(gs_data , give.attr = FALSE)
+
+boxplot(gs_data$GrainYield_Mgha)
+
+hist(gs_data$GrainYield_Mgha)
+
+hist(gs_data$NDVI)
+
+boxplot(gs_data$NDVI)
+
+boxplot(gs_data$PI_N_Uptake)
+
+hist(gs_data$PI_N_Uptake)
+
+#Overall data looks good -- no errors of data entry
+
+```
+
+##Data for Table 3
+```{r}
+
+table_3_data <- gs_data %>% 
+  select(site_year , TopDress_kgha_f , GrainYield_Mgha) %>% 
+  group_by(site_year , TopDress_kgha_f) %>% 
+  summarise(GrainYield_min = min(GrainYield_Mgha),
+            GrainYield_max = max(GrainYield_Mgha),
+            GrainYield_mean = mean(GrainYield_Mgha)) %>% 
+  ungroup()
+    
+table_3_data$GrainYield_min <- round(table_3_data$GrainYield_min , digits = 1)
+table_3_data$GrainYield_max <- round(table_3_data$GrainYield_max , digits = 1)
+table_3_data$GrainYield_mean <- round(table_3_data$GrainYield_mean , digits = 1)
+
+```
+
+
+## Calculating GS RI
+
+```{r}
+
+max_gs_ndvi <- gs_data %>% 
+  filter(N_level_kgha_f %in% c(225, 235) & TopDress_kgha_f == 0) %>% 
+  select(site_year , NDVI) %>% 
+  group_by(site_year) %>% 
+  summarise(mean_NDVI = mean(NDVI))
+
+max_gs_ndvi$mean_NDVI <- round(max_gs_ndvi$mean_NDVI , digits = 2)
+
+nic17 <- subset(max_gs_ndvi, site_year == "Nicolaus-17")
+nic17maxNDVI <- nic17$mean_NDVI
+nic17maxNDVI <- as.numeric(nic17maxNDVI)
+nic17maxNDVI
+
+wil17 <- subset(max_gs_ndvi, site_year == "Williams-17")
+wil17maxNDVI <- wil17$mean_NDVI
+wil17maxNDVI <- as.numeric(wil17maxNDVI)
+wil17maxNDVI
+
+arb18 <- subset(max_gs_ndvi, site_year == "Arbuckle-18")
+arb18maxNDVI <- arb18$mean_NDVI
+arb18maxNDVI <- as.numeric(arb18maxNDVI)
+arb18maxNDVI
+
+biggs18 <- subset(max_gs_ndvi, site_year == "Biggs-18")
+biggs18maxNDVI <- biggs18$mean_NDVI
+biggs18maxNDVI <- as.numeric(biggs18maxNDVI)
+biggs18maxNDVI
+
+mry18 <- subset(max_gs_ndvi, site_year == "Marysville-18")
+mry18maxNDVI <- mry18$mean_NDVI
+mry18maxNDVI <- as.numeric(mry18maxNDVI)
+mry18maxNDVI
+
+nic18 <- subset(max_gs_ndvi, site_year == "Nicolaus-18")
+nic18maxNDVI <- nic18$mean_NDVI
+nic18maxNDVI <- as.numeric(nic18maxNDVI)
+nic18maxNDVI
+
+arb19 <- subset(max_gs_ndvi, site_year == "Arbuckle-19")
+arb19maxNDVI <- arb19$mean_NDVI
+arb19maxNDVI <- as.numeric(arb19maxNDVI)
+arb19maxNDVI
+
+davis19 <- subset(max_gs_ndvi, site_year == "Davis-19")
+davis19maxNDVI <- davis19$mean_NDVI
+davis19maxNDVI <- as.numeric(davis19maxNDVI)
+davis19maxNDVI
+
+mry19 <- subset(max_gs_ndvi, site_year == "Marysville-19")
+mry19maxNDVI <- mry19$mean_NDVI
+mry19maxNDVI <- as.numeric(mry19maxNDVI)
+mry19maxNDVI
+
+res19 <- subset(max_gs_ndvi, site_year == "RES-19")
+res19maxNDVI <- res19$mean_NDVI
+res19maxNDVI <- as.numeric(res19maxNDVI)
+res19maxNDVI
+
+gs_data <- gs_data %>% 
+  mutate(max_NDVI = case_when(
+                          site_year == "Nicolaus-17" ~ nic17maxNDVI ,
+                          site_year == "Williams-17" ~ wil17maxNDVI ,
+                          site_year == "Arbuckle-18" ~ arb18maxNDVI ,
+                          site_year == "Biggs-18" ~ biggs18maxNDVI ,
+                          site_year == "Marysville-18" ~ mry18maxNDVI ,
+                          site_year == "Nicolaus-18" ~ nic18maxNDVI,
+                          site_year == "Arbuckle-19" ~ arb19maxNDVI ,
+                          site_year == "Davis-19" ~ davis19maxNDVI ,
+                          site_year == "Marysville-19" ~ mry19maxNDVI ,
+                          site_year == "RES-19" ~ res19maxNDVI)
+  )
+
+gs_data <- gs_data %>%
+  mutate(gs_NDVI_Response_Index = case_when(
+                          site_year == "Nicolaus-17" ~ nic17maxNDVI / NDVI,
+                          site_year == "Williams-17" ~ wil17maxNDVI / NDVI,
+                          site_year == "Arbuckle-18" ~ arb18maxNDVI / NDVI ,
+                          site_year == "Biggs-18" ~ biggs18maxNDVI / NDVI ,
+                          site_year == "Marysville-18" ~ mry18maxNDVI / NDVI ,
+                          site_year == "Nicolaus-18" ~ nic18maxNDVI / NDVI,
+                          site_year == "Arbuckle-19" ~ arb19maxNDVI / NDVI,
+                          site_year == "Davis-19" ~ davis19maxNDVI / NDVI,
+                          site_year == "Marysville-19" ~ mry19maxNDVI / NDVI,
+                          site_year == "RES-19" ~ res19maxNDVI / NDVI
+                        )) #calculates NDVI response index
+
+str(gs_data , give.attr = FALSE)
+
+hist(gs_data$gs_NDVI_Response_Index)
+boxplot(gs_data$gs_NDVI_Response_Index)
+hist(gs_data$GrainYield_Mgha)
+boxplot(gs_data$GrainYield_Mgha)
+
+gs_data$gs_NDVI_Response_Index[gs_data$gs_NDVI_Response_Index < 1] <- 1 #converts values less than 1, to 1.
+
+```
+
+##Drone Data
+
+```{r}
+
+drone_data <- read_csv(file = "DATA/PI_drone_data.csv")
+
+drone_data <- drone_data %>% 
+  filter(N_level_kgha != 275)
+
+str(drone_data , give.attr = FALSE)
+
+drone_data <- drone_data %>% 
+  mutate(year = factor(year) ,
+         exp_plot_number = factor(exp_plot_number) ,
+         Block = factor(Block) ,
+         MainPlot = factor(MainPlot) ,
+         N_level = factor(N_level) ,
+         N_level_kgha_f = factor(N_level_kgha)
+  )
+
+drone_data$site_year <- factor(drone_data$site_year , levels = c("Nicolaus-17" , "Williams-17" , "Arbuckle-18" , "Biggs-18" , "Marysville-18" , "Nicolaus-18" , "Arbuckle-19" , "Davis-19" , "Marysville-19" , "RES-19"))
+
+str(drone_data , give.attr = FALSE)
+
+
+drone_data <- dplyr::select(drone_data ,
+                      site_year,
+                      year,
+                      exp_plot_number,
+                      Block,
+                      MainPlot,
+                      N_level,
+                      N_level_kgha,
+                      N_level_kgha_f,
+                      biomass_plus_bag_g,
+                      ring_size,
+                      paper_bag_g,
+                      num_of_paper_bags,
+                      sample_weight_mg,
+                      sample_N_ug,
+                      bluemean,
+                      greenmean,
+                      redmean,
+                      edgemean,
+                      nirmean
+                      )#selects the relevant columns
+
+str(drone_data , give.attr = FALSE)
+
+#visualize drone_data to look for outliers
+
+boxplot(drone_data$bluemean)
+hist(drone_data$bluemean)
+
+boxplot(drone_data$greenmean)
+hist(drone_data$greenmean)
+
+boxplot(drone_data$redmean)
+hist(drone_data$redmean)
+
+boxplot(drone_data$edgemean)
+hist(drone_data$edgemean)
+
+boxplot(drone_data$nirmean)
+hist(drone_data$nirmean)
+
+```
+
+```{r}
+
+drone_data <-  drone_data %>% 
+  mutate( biomass_dry_wt = biomass_plus_bag_g - (paper_bag_g * num_of_paper_bags) ,
+          aboveground_biomass = (biomass_dry_wt / ring_size) * 10 , #ring size 0.5 m^2 biomass in kg per ha
+          n_content = sample_N_ug / sample_weight_mg ,
+          PI_N_Uptake = (aboveground_biomass * n_content) / 1000 #n uptake in kg per ha
+          )#processes the data2
+
+boxplot(drone_data$PI_N_Uptake)
+hist(drone_data$PI_N_Uptake)
+
+drone_data <- drone_data %>% 
+  mutate(uas_NDRE = ((nirmean - edgemean) / (nirmean + edgemean)) ,
+         uas_NDVI = ((nirmean - redmean) / (nirmean + redmean))
+         ) #calculates NDRE and NDVI
+
+boxplot(drone_data$uas_NDRE)
+hist(drone_data$uas_NDRE)
+
+boxplot(drone_data$uas_NDVI)
+hist(drone_data$uas_NDVI)
+
+ggplot(data = drone_data, aes(x = PI_N_Uptake , y = uas_NDRE )) +
+  geom_point(mapping = aes(x = PI_N_Uptake , y = uas_NDRE , shape = site_year) , data = drone_data) +
+  theme_classic() +
+  scale_shape_manual(values = seq(4:20)) +
+  coord_cartesian(ylim = c(0,1))
+
+ggplot(data = drone_data, aes(x = PI_N_Uptake , y = uas_NDVI )) +
+  geom_point(mapping = aes(x = PI_N_Uptake , y = uas_NDVI , shape = site_year) , data = drone_data) +
+  theme_classic() +
+  scale_shape_manual(values = seq(4:20)) +
+  coord_cartesian(ylim = c(0,1))
+  
+drone_data$uas_NDRE <- round(drone_data$uas_NDRE , digits = 2) #rounds to the precision of the instrument
+drone_data$uas_NDVI <- round(drone_data$uas_NDVI , digits = 2) #rounds to the precision of the instrument
+
+```
+
+## Calculating UAS RI
+```{r}
+#gets the max NDRE value for each site
+
+max_drone_data <- drone_data %>% 
+  filter(N_level_kgha_f %in% c(225, 235)) %>% 
+  select(site_year , uas_NDVI , uas_NDRE) %>% 
+  group_by(site_year) %>% 
+  summarise_all(.funs = mean) %>% 
+  ungroup()
+
+max_drone_data$uas_NDVI <- round(max_drone_data$uas_NDVI , digits = 2)
+max_drone_data$uas_NDRE <- round(max_drone_data$uas_NDRE , digits = 2)
+
+nic17 <- subset(max_drone_data, site_year == "Nicolaus-17")
+nic17maxuas_NDRE <- as.numeric(nic17$uas_NDRE)
+nic17maxuas_NDRE
+nic17maxuas_NDVI <- as.numeric(nic17$uas_NDVI)
+nic17maxuas_NDVI
+
+wil17 <- subset(max_drone_data, site_year == "Williams-17")
+wil17maxuas_NDRE <- as.numeric(wil17$uas_NDRE)
+wil17maxuas_NDRE
+wil17maxuas_NDVI <- as.numeric(wil17$uas_NDVI)
+wil17maxuas_NDVI
+
+arb18 <- subset(max_drone_data, site_year == "Arbuckle-18")
+arb18maxuas_NDRE <- as.numeric(arb18$uas_NDRE)
+arb18maxuas_NDRE
+arb18maxuas_NDVI <- as.numeric(arb18$uas_NDVI)
+arb18maxuas_NDVI
+
+biggs18 <- subset(max_drone_data, site_year == "Biggs-18")
+biggs18maxuas_NDRE <- as.numeric(biggs18$uas_NDRE)
+biggs18maxuas_NDRE
+biggs18maxuas_NDVI <- as.numeric(biggs18$uas_NDVI)
+biggs18maxuas_NDVI
+
+mry18 <- subset(max_drone_data, site_year == "Marysville-18")
+mry18maxuas_NDRE <- as.numeric(mry18$uas_NDRE)
+mry18maxuas_NDRE
+mry18maxuas_NDVI <- as.numeric(mry18$uas_NDVI)
+mry18maxuas_NDVI
+
+nic18 <- subset(max_drone_data, site_year == "Nicolaus-18")
+nic18maxuas_NDRE <- as.numeric(nic18$uas_NDRE)
+nic18maxuas_NDRE
+nic18maxuas_NDVI <- as.numeric(nic18$uas_NDVI)
+nic18maxuas_NDVI
+
+arb19 <- subset(max_drone_data, site_year == "Arbuckle-19")
+arb19maxuas_NDRE <- as.numeric(arb19$uas_NDRE)
+arb19maxuas_NDRE
+arb19maxuas_NDVI <- as.numeric(arb19$uas_NDVI)
+arb19maxuas_NDVI
+
+davis19 <- subset(max_drone_data, site_year == "Davis-19")
+davis19maxuas_NDRE <- as.numeric(davis19$uas_NDRE)
+davis19maxuas_NDRE
+davis19maxuas_NDVI <- as.numeric(davis19$uas_NDVI)
+davis19maxuas_NDVI
+
+mry19 <- subset(max_drone_data, site_year == "Marysville-19")
+mry19maxuas_NDRE <- as.numeric(mry19$uas_NDRE)
+mry19maxuas_NDRE
+mry19maxuas_NDVI <- as.numeric(mry19$uas_NDVI)
+mry19maxuas_NDVI
+
+res19 <- subset(max_drone_data, site_year == "RES-19")
+res19maxuas_NDRE <- as.numeric(res19$uas_NDRE)
+res19maxuas_NDRE
+res19maxuas_NDVI <- as.numeric(res19$uas_NDVI)
+res19maxuas_NDVI
+
+drone_data <- drone_data %>% 
+  mutate(max_uas_NDRE = case_when(
+                          site_year == "Nicolaus-17" ~ nic17maxuas_NDRE ,
+                          site_year == "Williams-17" ~ wil17maxuas_NDRE ,
+                          site_year == "Arbuckle-18" ~ arb18maxuas_NDRE ,
+                          site_year == "Biggs-18" ~ biggs18maxuas_NDRE ,
+                          site_year == "Marysville-18" ~ mry18maxuas_NDRE ,
+                          site_year == "Nicolaus-18" ~ nic18maxuas_NDRE,
+                          site_year == "Arbuckle-19" ~ arb19maxuas_NDRE ,
+                          site_year == "Davis-19" ~ davis19maxuas_NDRE ,
+                          site_year == "Marysville-19" ~ mry19maxuas_NDRE ,
+                          site_year == "RES-19" ~ res19maxuas_NDRE) #assign the max NDRE value for each site
+  )
+
+drone_data <- drone_data %>%
+  mutate(uas_NDRE_Response_Index = case_when(
+                          site_year == "Nicolaus-17" ~ nic17maxuas_NDRE / uas_NDRE,
+                          site_year == "Williams-17" ~ wil17maxuas_NDRE / uas_NDRE,
+                          site_year == "Arbuckle-18" ~ arb18maxuas_NDRE / uas_NDRE  ,
+                          site_year == "Biggs-18" ~ biggs18maxuas_NDRE / uas_NDRE ,
+                          site_year == "Marysville-18" ~ mry18maxuas_NDRE / uas_NDRE ,
+                          site_year == "Nicolaus-18" ~ nic18maxuas_NDRE / uas_NDRE,
+                          site_year == "Arbuckle-19" ~ arb19maxuas_NDRE / uas_NDRE,
+                          site_year == "Davis-19" ~ davis19maxuas_NDRE / uas_NDRE,
+                          site_year == "Marysville-19" ~ mry19maxuas_NDRE / uas_NDRE,
+                          site_year == "RES-19" ~ res19maxuas_NDRE / uas_NDRE
+                        )) #calculates uas_NDRE response index
+
+drone_data <- drone_data %>% 
+  mutate(max_uas_NDVI = case_when(
+                          site_year == "Nicolaus-17" ~ nic17maxuas_NDVI ,
+                          site_year == "Williams-17" ~ wil17maxuas_NDVI ,
+                          site_year == "Arbuckle-18" ~ arb18maxuas_NDVI ,
+                          site_year == "Biggs-18" ~ biggs18maxuas_NDVI ,
+                          site_year == "Marysville-18" ~ mry18maxuas_NDVI ,
+                          site_year == "Nicolaus-18" ~ nic18maxuas_NDVI,
+                          site_year == "Arbuckle-19" ~ arb19maxuas_NDVI ,
+                          site_year == "Davis-19" ~ davis19maxuas_NDVI ,
+                          site_year == "Marysville-19" ~ mry19maxuas_NDVI ,
+                          site_year == "RES-19" ~ res19maxuas_NDVI) #assign max ndvi value for each site
+  )
+
+drone_data <- drone_data %>%
+  mutate(uas_NDVI_Response_Index = case_when(
+                          site_year == "Nicolaus-17" ~ nic17maxuas_NDVI / uas_NDVI,
+                          site_year == "Williams-17" ~ wil17maxuas_NDVI / uas_NDVI,
+                          site_year == "Arbuckle-18" ~ arb18maxuas_NDVI / uas_NDVI  ,
+                          site_year == "Biggs-18" ~ biggs18maxuas_NDVI / uas_NDVI ,
+                          site_year == "Marysville-18" ~ mry18maxuas_NDVI / uas_NDVI ,
+                          site_year == "Nicolaus-18" ~ nic18maxuas_NDVI / uas_NDVI,
+                          site_year == "Arbuckle-19" ~ arb19maxuas_NDVI / uas_NDVI,
+                          site_year == "Davis-19" ~ davis19maxuas_NDVI / uas_NDVI,
+                          site_year == "Marysville-19" ~ mry19maxuas_NDVI / uas_NDVI,
+                          site_year == "RES-19" ~ res19maxuas_NDVI / uas_NDVI
+                        )) #calculates uas_NDVI response index
+
+str(drone_data , give.attr =  F)
+
+boxplot(drone_data$uas_NDRE_Response_Index)
+hist(drone_data$uas_NDRE_Response_Index)
+
+boxplot(drone_data$uas_NDVI_Response_Index)
+hist(drone_data$uas_NDVI_Response_Index)
+
+drone_data$uas_NDVI_Response_Index[drone_data$uas_NDVI_Response_Index < 1] <- 1 #converts values less than 1, to 1.
+drone_data$uas_NDRE_Response_Index[drone_data$uas_NDRE_Response_Index < 1] <- 1 #converts values less than 1, to 1.
+
+```
+
+
+```{r}
+
+drone_data <- dplyr::select(drone_data ,
+                      site_year,
+                      year,
+                      exp_plot_number,
+                      Block,
+                      MainPlot,
+                      N_level_kgha,
+                      N_level_kgha_f,
+                      PI_N_Uptake,
+                      uas_NDRE,
+                      uas_NDVI,
+                      uas_NDRE_Response_Index,
+                      uas_NDVI_Response_Index
+                      )#selects the relevant columns
+
+sUAS_yield_data <- yield_data
+
+sUAS_yield_data$site_year <- factor(sUAS_yield_data$site_year , levels = c("Nicolaus-17" , "Williams-17" , "Arbuckle-18" , "Biggs-18" , "Marysville-18" , "Nicolaus-18" , "Arbuckle-19" , "Davis-19" , "Marysville-19" , "RES-19"))
+
+str(drone_data , give.attr = F)
+str(sUAS_yield_data , give.attr = F)
+
+sUAS_data <- full_join( drone_data , sUAS_yield_data)
+
+sUAS_data <- dplyr::select(sUAS_data ,
+                      site_year,
+                      year,
+                      exp_plot_number,
+                      Block,
+                      MainPlot,
+                      SubPlot,
+                      N_level_kgha,
+                      N_level_kgha_f,
+                      TopDress_kgha,
+                      TopDress_kgha_f,
+                      PI_N_Uptake,
+                      uas_NDRE,
+                      uas_NDVI,
+                      GrainYield_Mgha,
+                      uas_NDRE_Response_Index,
+                      uas_NDVI_Response_Index
+                      )#selects the relevant columns
+
+
+str(sUAS_data , give.attr = F)
+
+```
+
+##Combining the data
+```{r}
+
+gs_data <- gs_data %>% 
+  mutate(gs_NDVI_SI = 1 / gs_NDVI_Response_Index)
+
+sUAS_data <- sUAS_data %>% 
+  mutate(uas_NDVI_SI = 1 / uas_NDVI_Response_Index)
+
+sUAS_data <- sUAS_data %>% 
+  mutate(uas_NDRE_SI = 1 / uas_NDRE_Response_Index)
+
+gs_data <- gs_data %>% 
+  dplyr::select(site_year ,
+                year,
+                exp_plot_number,
+                Block,
+                MainPlot,
+                SubPlot,
+                N_level_kgha,
+                N_level_kgha_f,
+                TopDress_kgha,
+                TopDress_kgha_f,
+                PI_N_Uptake, 
+                NDVI, 
+                GrainYield_Mgha,
+                gs_NDVI_Response_Index,
+                gs_NDVI_SI
+         )
+
+sUAS_data <- sUAS_data %>% 
+  dplyr::select(site_year ,
+                year,
+                exp_plot_number,
+                Block,
+                MainPlot,
+                SubPlot,
+                N_level_kgha,
+                N_level_kgha_f,
+                TopDress_kgha,
+                TopDress_kgha_f,
+                uas_NDRE,
+                uas_NDVI,
+                uas_NDVI_Response_Index,
+                uas_NDVI_SI,
+                uas_NDRE_Response_Index,
+                uas_NDRE_SI
+         )
+
+paper3_data <- full_join(gs_data , sUAS_data)
+
+```
+
+
+```{r}
+
+paper3_gsdata <- paper3_data %>% 
+  dplyr::select(site_year , 
+                year , 
+                exp_plot_number ,
+                Block ,
+                MainPlot ,
+                SubPlot ,
+                N_level_kgha ,
+                N_level_kgha_f ,
+                TopDress_kgha ,
+                TopDress_kgha_f ,
+                NDVI,
+                gs_NDVI_Response_Index,
+                gs_NDVI_SI ,
+                GrainYield_Mgha,
+                PI_N_Uptake) %>% 
+  mutate(Platform = "GreenSeeker_NDVI" ) %>% 
+  rename(Index = NDVI , 
+         SI = gs_NDVI_SI,
+         RI = gs_NDVI_Response_Index)
+
+paper3_uas_ndvi_data <- paper3_data %>% 
+  dplyr::select(site_year , 
+                year , 
+                exp_plot_number ,
+                Block ,
+                MainPlot ,
+                SubPlot ,
+                N_level_kgha ,
+                N_level_kgha_f ,
+                TopDress_kgha ,
+                TopDress_kgha_f ,
+                uas_NDVI,
+                uas_NDVI_Response_Index,
+                uas_NDVI_SI ,
+                GrainYield_Mgha,
+                PI_N_Uptake) %>% 
+  mutate(Platform = "sUAS_NDVI" ) %>% 
+  rename(Index = uas_NDVI,
+         SI = uas_NDVI_SI,
+         RI = uas_NDVI_Response_Index)
+
+paper3_uas_ndre_data <- paper3_data %>% 
+  dplyr::select(site_year , 
+                year , 
+                exp_plot_number ,
+                Block ,
+                MainPlot ,
+                SubPlot ,
+                N_level_kgha ,
+                N_level_kgha_f ,
+                TopDress_kgha ,
+                TopDress_kgha_f ,
+                uas_NDRE ,
+                uas_NDRE_Response_Index ,
+                uas_NDRE_SI ,
+                GrainYield_Mgha,
+                PI_N_Uptake) %>% 
+  mutate(Platform = "sUAS_NDRE" ) %>% 
+  rename(Index = uas_NDRE ,
+         SI = uas_NDRE_SI,
+         RI = uas_NDRE_Response_Index)
+
+paper3_data <- rbind(paper3_gsdata ,
+                     paper3_uas_ndvi_data , 
+                     paper3_uas_ndre_data)
+
+paper3_data <- paper3_data %>% 
+  dplyr::select(site_year , 
+                year , 
+                Platform,
+                exp_plot_number ,
+                Block ,
+                MainPlot ,
+                SubPlot ,
+                N_level_kgha ,
+                N_level_kgha_f ,
+                TopDress_kgha ,
+                TopDress_kgha_f ,
+                Index,
+                RI,
+                SI ,
+                GrainYield_Mgha,
+                PI_N_Uptake)
+
+paper3_data$Platform <- as.factor(paper3_data$Platform)
+
+str(paper3_data , give.attr = F)
+
+paper3_data <- tibble::rowid_to_column(paper3_data, "ID") #adds a columns with row number.
+
+paper3_data <- paper3_data %>% 
+  filter(!ID %in% c(193 , 194 , 721 , 722, 1249 , 1250)) #removes Biggs-18 101 plot bc tractor ran through it
+
+paper3_data$Platform = factor(paper3_data$Platform, levels=c("GreenSeeker_NDVI" , "sUAS_NDVI" , "sUAS_NDRE"))
+
+boxplot(paper3_data$RI ~ paper3_data$Platform)
+
+paper3_data$RI <- round(paper3_data$RI , digits = 3)
+paper3_data$SI <- round(paper3_data$SI , digits = 3)
+
+hist_data <- paper3_data %>% 
+  select(Platform , RI) %>% 
+  group_by(Platform) %>% 
+  summarise(mean = mean(RI) , sd = sd(RI) , median = median(RI))
+
+hist_data$mean = round(hist_data$mean , digits = 2)
+hist_data$sd = round(hist_data$sd , digits = 2)
+hist_data$median = round(hist_data$median , digits = 2)
+
+hist_data_gs <- hist_data %>% 
+  filter(Platform == "GreenSeeker_NDVI")
+
+print(hist_data_gs[2] + (5*hist_data_gs[3])) #upper limit for outlier removal. Observations that are 5 sd's away from mean. Observations greater than 3.57 in GreenSeeker. 
+
+#need to remove arbuckle-18 plot 203, , arbuckle-18 plot 302 , and arbuckle-19 plot 104. 
+
+paper3_data <- paper3_data %>% 
+  filter(!ID %in% c(161 , 162 , 171 , 172 , 343 , 344 ,
+                    ))
+
+```
+
+##Data for Table 2
+
+```{r}
+
+table_2_data_1 <- paper3_data %>% 
+  select(site_year , Platform , Index , RI) %>% 
+  group_by(site_year , Platform) %>% 
+  summarise(Index_min = min(Index),
+            Index_max = max(Index),
+            RI_min = min(RI),
+            RI_max = max(RI)) %>% 
+  ungroup()
+    
+table_2_data_1$Index_min <- round(table_2_data_1$Index_min , digits = 2)
+table_2_data_1$Index_max <- round(table_2_data_1$Index_max , digits = 2)
+table_2_data_1$RI_min <- round(table_2_data_1$RI_min , digits = 2)
+table_2_data_1$RI_max <- round(table_2_data_1$RI_max , digits = 2)
+
+table_2_data_2 <- paper3_data %>% 
+  select(site_year , Platform , PI_N_Uptake) %>% 
+  group_by(site_year , Platform) %>% 
+  filter(Platform == "GreenSeeker_NDVI") %>% 
+  summarise(PI_N_Uptake_min = min(PI_N_Uptake),
+            PI_N_Uptake_max = max(PI_N_Uptake)) %>% 
+  ungroup()
+
+table_2_data_2$PI_N_Uptake_min <- round(table_2_data_2$PI_N_Uptake_min , digits = 0)
+table_2_data_2$PI_N_Uptake_max <- round(table_2_data_2$PI_N_Uptake_max , digits = 0)
+  
+
+```
+
+
+```{r}
+
+str(paper3_data , give.attr = F)
+
+ggplot(data = paper3_data , aes( x = PI_N_Uptake , y = SI)) +
+  geom_point( data = paper3_data , aes ( x = PI_N_Uptake , y = SI , color = Platform)) +
+  facet_wrap(~Platform) +
+  theme_classic()
+
+ggplot(data = paper3_data , aes( x = PI_N_Uptake , y = RI)) +
+  geom_point( data = paper3_data , aes ( x = PI_N_Uptake , y = RI , color = Platform)) +
+  facet_wrap(~Platform) +
+  theme_classic()
+
+
+
+```
+
+
+#VI MODELS
+
+##GS NDVI RI
+```{r}
+
+gsndvi_df <- paper3_data %>% 
+  filter(Platform == "GreenSeeker_NDVI") #filter just gs ndvi values
+
+PI_N_Uptake2 <- gsndvi_df$PI_N_Uptake^2
+gs_ndvi_qm <- lm(RI ~ PI_N_Uptake + PI_N_Uptake2 , gsndvi_df) #quadratic model
+summary(gs_ndvi_qm)
+plot(gs_ndvi_qm)
+
+gs_ndvi_fit_qm <- fitted(gs_ndvi_qm) #gets fitted values from quad model
+gs_ndvi_qm_df <- data.frame(gsndvi_df$PI_N_Uptake , gs_ndvi_fit_qm) #creates dataframe
+gs_ndvi_qm_df <- gs_ndvi_qm_df %>% 
+  mutate(Platform = "GreenSeeker_NDVI")
+
+gsndviriqm <- ggplot(data = gsndvi_df , aes ( x = PI_N_Uptake , y = RI)) +
+  geom_point(data = gsndvi_df , aes ( x = PI_N_Uptake , y = RI , shape = site_year)) +
+  geom_line(data = gs_ndvi_qm_df , aes( x = gsndvi_df.PI_N_Uptake , y = gs_ndvi_fit_qm) , size = 1.5 , color = "blue") +
+  coord_cartesian(ylim = c(1, 5)) +
+  theme_classic() +
+  labs(x = NULL , y = NULL) +
+  annotate("text", x = 100 , y = 5, label = "GS-NDVI-RI", size = 7 , color = "black") +
+    theme(axis.title = element_text(size = 26),
+        axis.text = element_text(size = 26),
+        legend.text = element_text(size = 24),
+        legend.title = element_text(size = 24)
+        ) +
+  geom_hline(yintercept = 1 , size = 0.75) +
+  scale_shape_manual(values = c(1:20)) +
+  theme(legend.position = "none")
+
+
+gsndviriqm
+```
+
+##sUAS NDVI RI
+```{r}
+
+sUASndvi_df <- paper3_data %>% 
+  filter(Platform == "sUAS_NDVI") #filter just sUAS ndvi values
+
+PI_N_Uptake2 <- sUASndvi_df$PI_N_Uptake^2
+sUAS_ndvi_qm <- lm(RI ~ PI_N_Uptake + PI_N_Uptake2 , sUASndvi_df) #quadratic model
+summary(sUAS_ndvi_qm) #r2 = 0.78
+summary(gs_ndvi_qm)
+plot(gs_ndvi_qm)
+
+sUAS_ndvi_fit_qm <- fitted(sUAS_ndvi_qm) #gets fitted values from quad model
+sUAS_ndvi_qm_df <- data.frame(sUASndvi_df$PI_N_Uptake , sUAS_ndvi_fit_qm) #creates dataframe
+sUAS_ndvi_qm_df <- sUAS_ndvi_qm_df %>% 
+  mutate(Platform = "sUAS_NDVI")
+
+suasndviriqm <- ggplot(data = sUASndvi_df , aes ( x = PI_N_Uptake , y = RI)) +
+  geom_point(data = sUASndvi_df , aes ( x = PI_N_Uptake , y = RI , shape = site_year)) +
+  geom_line(data = sUAS_ndvi_qm_df , aes( x = sUASndvi_df.PI_N_Uptake , y = sUAS_ndvi_fit_qm) , size = 1.5 , color = "blue") +
+  coord_cartesian(ylim = c(1 , 5)) +
+  theme_classic() +
+  labs(x = NULL , y = NULL , shape = "Site-Year") +
+  annotate("text", x = 100 , y = 5, label = "sUAS-NDVI-RI", size = 7 , color = "black") +
+  theme(axis.title = element_text(size = 26),
+        axis.text = element_text(size = 26),
+        legend.text = element_text(size = 20),
+        legend.title = element_text(size = 20)
+        ) +
+  geom_hline(yintercept = 1 , size = 0.75) +
+  scale_shape_manual(values = c(1:20)) +
+  theme(legend.position = c(.75 , .75))
+
+suasndviriqm
+```
+
+##sUAS NDRE-RI
+```{r}
+
+sUASndre_df <- paper3_data %>% 
+  filter(Platform == "sUAS_NDRE") #filter just sUAS ndre values
+
+PI_N_Uptake2 <- sUASndre_df$PI_N_Uptake^2
+sUAS_ndre_qm <- lm(RI ~ PI_N_Uptake + PI_N_Uptake2 , sUASndre_df) #quadratic model
+summary(sUAS_ndre_qm) #r2 = 0.82
+
+sUAS_ndre_fit_qm <- fitted(sUAS_ndre_qm) #gets fitted values from linear model
+sUAS_ndre_qm_df <- data.frame(sUASndre_df$PI_N_Uptake , sUAS_ndre_fit_qm) #creates dataframe
+
+sUAS_ndre_qm_df <- sUAS_ndre_qm_df %>% 
+  mutate(Platform = "sUAS_NDRE")
+
+suasndreriqm <- ggplot(data = sUASndre_df , aes ( x = PI_N_Uptake , y = RI)) +
+  geom_point(data = sUASndre_df , aes ( x = PI_N_Uptake , y = RI , shape = site_year)) +
+  geom_line(data = sUAS_ndre_qm_df , aes( x = sUASndre_df.PI_N_Uptake , y = sUAS_ndre_fit_qm) , size = 1.5 , color = "blue") +
+  coord_cartesian(ylim = c(1 , 5)) +
+  theme_classic() +
+  labs(x = NULL , y = NULL) +
+  annotate("text", x = 100 , y = 5, label = "sUAS-NDRE-RI", size = 7 , color = "black") +
+  theme(axis.title = element_text(size = 26),
+        axis.text = element_text(size = 26),
+        legend.text = element_text(size = 24),
+        legend.title = element_text(size = 24)
+        ) +
+  geom_hline(yintercept = 1 , size = 0.75) +
+  theme(legend.position = "none") +
+  scale_shape_manual(values = c(1:20))
+
+suasndreriqm
+
+```
+
+##GRID
+```{r}
+
+paper_3_fig_3 <- grid.arrange(arrangeGrob(gsndviriqm,
+                                          suasndreriqm,
+                                          suasndviriqm,
+                                          left = textGrob("Response Index" , rot = 90 , gp = gpar(fontsize = 32)),
+                                  bottom = textGrob("PI Total N Uptake ( kg N ha"^-1~")" , gp = gpar(fontsize = 32)),
+                                  nrow = 1,
+                                  ncol = 3))
+
+ggsave("FIGURES/paper_3_fig_3.tiff" , paper_3_fig_3 , compression = "lzw" , width = 21 , height = 10, type = "cairo" , dpi = 750)
+
+
+```
+
+
+##GS NDVI
+
+```{r}
+
+gsndvi_df <- paper3_data %>% 
+  filter(Platform == "GreenSeeker_NDVI") #filter just gs ndvi values
+
+
+PI_N_Uptake2 <- gsndvi_df$PI_N_Uptake^2
+gs_ndvi_qm <- lm(Index ~ PI_N_Uptake + PI_N_Uptake2 , gsndvi_df) #quadratic model
+summary(gs_ndvi_qm) #r2 = 0.80
+Anova(gs_ndvi_qm , type = 3)
+
+gs_ndvi_fit_qm <- fitted(gs_ndvi_qm) #gets fitted values from quad model
+gs_ndvi_qm_df <- data.frame(gsndvi_df$PI_N_Uptake , gs_ndvi_fit_qm) #creates dataframe
+gs_ndvi_qm_df <- gs_ndvi_qm_df %>% 
+  mutate(Platform = "GreenSeeker_NDVI")
+
+gs_ndvi_qm_r2 <- round(summary(gs_ndvi_qm)$adj.r.squared , digits = 2)
+gs_ndvi_qm_a <- as.numeric(as.character(coef(gs_ndvi_qm)[3]))
+gs_ndvi_qm_b <- as.numeric(as.character(coef(gs_ndvi_qm)[2]))
+gs_ndvi_qm_c <- as.numeric(as.character(coef(gs_ndvi_qm)[1]))
+gs_ndvi_qm_sym_x <- (-gs_ndvi_qm_b) / (2*gs_ndvi_qm_a)
+gs_ndvi_qm_sym_y <- gs_ndvi_qm_a*(gs_ndvi_qm_sym_x^2) + gs_ndvi_qm_b*gs_ndvi_qm_sym_x + gs_ndvi_qm_c
+
+gs_ndvi_qm_eqn <- paste("y == -1.8e-05*x^2 + 0.006* x + 0.24")
+
+gs_ndvi_qm_r2
+gs_ndvi_qm_sym_y
+gs_ndvi_qm_sym_x
+```
+
+##sUAS NDVI
+
+```{r}
+
+
+
+sUASndvi_df <- paper3_data %>% 
+  filter(Platform == "sUAS_NDVI") #filter just sUAS ndvi values
+
+
+PI_N_Uptake2 <- sUASndvi_df$PI_N_Uptake^2
+sUAS_ndvi_qm <- lm(Index ~ PI_N_Uptake + PI_N_Uptake2 , sUASndvi_df) #quadratic model
+summary(sUAS_ndvi_qm) #r2 = 0.78
+
+sUAS_ndvi_fit_qm <- fitted(sUAS_ndvi_qm) #gets fitted values from quad model
+sUAS_ndvi_qm_df <- data.frame(sUASndvi_df$PI_N_Uptake , sUAS_ndvi_fit_qm) #creates dataframe
+sUAS_ndvi_qm_df <- sUAS_ndvi_qm_df %>% 
+  mutate(Platform = "sUAS_NDVI")
+
+#getting the equation for the plot
+sUAS_ndvi_qm_r2 <- round(summary(sUAS_ndvi_qm)$adj.r.squared , digits = 2)
+sUAS_ndvi_qm_a <- as.numeric(as.character(coef(sUAS_ndvi_qm)[3]))
+sUAS_ndvi_qm_b <- as.numeric(as.character(coef(sUAS_ndvi_qm)[2]))
+sUAS_ndvi_qm_c <- as.numeric(as.character(coef(sUAS_ndvi_qm)[1]))
+sUAS_ndvi_qm_sym_x <- (-sUAS_ndvi_qm_b) / (2*sUAS_ndvi_qm_a)
+sUAS_ndvi_qm_sym_y <- sUAS_ndvi_qm_a*(sUAS_ndvi_qm_sym_x^2) + sUAS_ndvi_qm_b*sUAS_ndvi_qm_sym_x + sUAS_ndvi_qm_c
+
+sUAS_ndvi_qm_eqn <- paste("y == -1.0e-05*x^2 + 0.0033* x + 0.67")
+
+sUAS_ndvi_qm_r2
+sUAS_ndvi_qm_sym_y
+sUAS_ndvi_qm_sym_x
+```
+
+
+##sUAS NDRE
+
+```{r}
+
+
+sUASndre_df <- paper3_data %>% 
+  filter(Platform == "sUAS_NDRE") #filter just sUAS ndre values
+
+PI_N_Uptake2 <- sUASndre_df$PI_N_Uptake^2
+sUAS_ndre_qm <- lm(Index ~ PI_N_Uptake + PI_N_Uptake2 , sUASndre_df) #quadratic model
+summary(sUAS_ndre_qm) #r2 = 0.82
+
+sUAS_ndre_qm_mse <- mean(residuals(sUAS_ndre_qm)^2)
+sUAS_ndre_qm_mse
+
+sUAS_ndre_qm_rmse <- sqrt(sUAS_ndre_qm_mse)
+sUAS_ndre_qm_rmse
+
+sUAS_ndre_fit_qm <- fitted(sUAS_ndre_qm) #gets fitted values from linear model
+sUAS_ndre_qm_df <- data.frame(sUASndre_df$PI_N_Uptake , sUAS_ndre_fit_qm) #creates dataframe
+
+sUAS_ndre_qm_df <- sUAS_ndre_qm_df %>% 
+  mutate(Platform = "sUAS_NDRE")
+  
+
+#getting the equation for the plot
+sUAS_ndre_qm_r2 <- round(summary(sUAS_ndre_qm)$adj.r.squared , digits = 2)
+sUAS_ndre_qm_a <- as.numeric(as.character(coef(sUAS_ndre_qm)[3]))
+sUAS_ndre_qm_b <- as.numeric(as.character(coef(sUAS_ndre_qm)[2]))
+sUAS_ndre_qm_c <- as.numeric(as.character(coef(sUAS_ndre_qm)[1]))
+sUAS_ndre_qm_sym_x <- (-sUAS_ndre_qm_b) / (2*sUAS_ndre_qm_a)
+sUAS_ndre_qm_sym_y <- sUAS_ndre_qm_a*(sUAS_ndre_qm_sym_x^2) + sUAS_ndre_qm_b*sUAS_ndre_qm_sym_x + sUAS_ndre_qm_c
+
+sUAS_ndre_qm_eqn <- paste("y == -1.1e-05*x^2 + 0.004* x + 0.27")
+
+sUAS_ndre_qm_r2
+sUAS_ndre_qm_sym_y
+sUAS_ndre_qm_sym_x
+
+```
+
+#RI MODELS
+
+##GS NDVI-RI
+
+```{r}
+
+paper3_data_no_2018 <- paper3_data %>% 
+  filter(year != "2018")
+#need to get the dataframe in the right form to make saturation figure for the paper. Removes 2018 year bc we don't use yield data from that year. Also removes outlier observations from Davis-19 site. 
+
+greenseeker_ndvi_data <- paper3_data_no_2018 %>% 
+  filter(Platform == "GreenSeeker_NDVI")
+
+ctrl <- lmeControl(opt = "optim") #changes control to "optimal" settings
+
+gs_ndvi_model <- lme(GrainYield_Mgha ~ SI * TopDress_kgha + I(SI*SI)  ,
+             control = ctrl ,
+             random = ~ I(TopDress_kgha) | site_year  , 
+             data = greenseeker_ndvi_data)
+
+summary(gs_ndvi_model)
+
+summary(gs_ndvi_model)$tTable
+
+Anova(gs_ndvi_model , type = 3)
+
+r.squaredGLMM(gs_ndvi_model)
+
+```
+
+### model diagnostics
+
+```{r}
+
+plot (gs_ndvi_model)
+
+plot(resid(gs_ndvi_model, type = "normalized") ~fitted(gs_ndvi_model))
+
+gs_ndvi_model_y <- resid(gs_ndvi_model, type = "normalized")
+gs_ndvi_model_x <- fitted(gs_ndvi_model)
+
+gs_ndvi_modelresid_data <- data.frame(gs_ndvi_model_x , gs_ndvi_model_y)
+
+ggplot( data = gs_ndvi_modelresid_data , aes( x = gs_ndvi_model_x , y = gs_ndvi_model_y)) +
+  geom_point(mapping = aes(gs_ndvi_model_x , gs_ndvi_model_y) , data = gs_ndvi_modelresid_data)
+
+hist(resid(gs_ndvi_model))
+
+
+plot(gs_ndvi_model, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(gs_ndvi_model, abline = c(0,1) )
+
+
+qqnorm(resid(gs_ndvi_model))
+qqline(resid(gs_ndvi_model))
+
+
+qqnorm(gs_ndvi_model , ~resid(.) | site_year)
+
+plot(ranef(gs_ndvi_model))
+
+pairs(gs_ndvi_model , id = 0.1) 
+
+qqnorm(gs_ndvi_model , ~ranef(.))
+
+plot( gs_ndvi_model, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+###outlier removal 
+
+```{r}
+
+greenseeker_ndvi_data_OR <- greenseeker_ndvi_data[-(c(which(abs(residuals(gs_ndvi_model,type="normalized"))>qnorm(0.999)))),]
+
+```
+
+###rerun model sans outliers
+```{r}
+
+ctrl <- lmeControl(opt = "optim") #changes control to "optimal" settings
+
+gs_ndvi_model_OR <- lme(GrainYield_Mgha ~ SI * TopDress_kgha + I(SI*SI)  ,
+             control = ctrl ,
+             random = ~ I(TopDress_kgha) | site_year  , 
+             data = greenseeker_ndvi_data_OR)
+
+summary(gs_ndvi_model_OR)
+
+summary(gs_ndvi_model_OR)$tTable
+
+Anova(gs_ndvi_model_OR , type = 3)
+
+r.squaredGLMM(gs_ndvi_model_OR)
+
+gs_ndvi_r_sq <- r.squaredGLMM(gs_ndvi_model_OR)
+
+gs_ndvi_r_sq_fixed <- round(gs_ndvi_r_sq[1] , digits = 2)
+gs_ndvi_r_sq_fixed
+
+gs_ndvi_r_sq_total <- round(gs_ndvi_r_sq[2] , digits = 2)
+gs_ndvi_r_sq_total
+
+gs_ndvi_r_sq_random <- gs_ndvi_r_sq_total - gs_ndvi_r_sq_fixed
+gs_ndvi_r_sq_random
+
+
+```
+
+### model diagnostics
+
+```{r}
+
+plot (gs_ndvi_model_OR)
+
+plot(resid(gs_ndvi_model_OR, type = "normalized") ~fitted(gs_ndvi_model_OR))
+
+gs_ndvi_model_OR_y <- resid(gs_ndvi_model_OR, type = "normalized")
+gs_ndvi_model_OR_x <- fitted(gs_ndvi_model_OR)
+
+gs_ndvi_model_ORresid_data <- data.frame(gs_ndvi_model_OR_x , gs_ndvi_model_OR_y)
+
+ggplot( data = gs_ndvi_model_ORresid_data , aes( x = gs_ndvi_model_OR_x , y = gs_ndvi_model_OR_y)) +
+  geom_point(mapping = aes(gs_ndvi_model_OR_x , gs_ndvi_model_OR_y) , data = gs_ndvi_model_ORresid_data)
+
+hist(resid(gs_ndvi_model_OR))
+
+
+plot(gs_ndvi_model_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(gs_ndvi_model_OR, abline = c(0,1) )
+
+
+qqnorm(resid(gs_ndvi_model_OR))
+qqline(resid(gs_ndvi_model_OR))
+
+
+qqnorm(gs_ndvi_model_OR , ~resid(.) | site_year)
+
+plot(ranef(gs_ndvi_model_OR))
+
+pairs(gs_ndvi_model_OR , id = 0.1)
+
+qqnorm(gs_ndvi_model_OR , ~ranef(.))
+
+plot( gs_ndvi_model_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+
+###emmeans
+
+```{r}
+
+mylist <- list(SI=seq(0.25 , 1 , by = .0001),TopDress_kgha =c( 34 , 0))
+
+gs_ndvi_emmeans <- emmeans(gs_ndvi_model_OR , ~TopDress_kgha * SI , at = mylist )
+
+gs_ndvi_emmeans_contrast <- as.data.frame(summary(contrast(gs_ndvi_emmeans , "pairwise" , side = ">" , by = "SI"))[1:7])
+
+gs_ndvi_emmeans_contrast <- gs_ndvi_emmeans_contrast %>% 
+  mutate(GS_NDVI_Response_Index = 1 / SI )
+
+gs_ndvi_emmeans_contrast <- gs_ndvi_emmeans_contrast %>% 
+  mutate(prob_postive_resp = (1 - p.value) * 100)
+
+gs_ndvi_emmeans_contrast <- gs_ndvi_emmeans_contrast %>% 
+  mutate(t_score = abs((estimate - 0.26)) / SE)
+
+gs_ndvi_emmeans_contrast <- gs_ndvi_emmeans_contrast %>% 
+  mutate(prob = if_else(estimate < 0.26 , pt(q = t_score , df = df , lower.tail = F) , pt(q = t_score , df = df , lower.tail = T)))
+
+gs_ndvi_emmeans_contrast$prob_percent <- (round(gs_ndvi_emmeans_contrast$prob , digits = 3) * 100)
+
+gs_ndvi_emmeans_contrast$GS_NDVI_Response_Index_r <- round(gs_ndvi_emmeans_contrast$GS_NDVI_Response_Index , digits = 3)
+
+gs_ndvi_run1 <- 125 - 100
+gs_ndvi_rise1 <- 0.6404977 - 0.09953884
+gs_ndvi_slope1 <- round((gs_ndvi_rise1 / gs_ndvi_run1) * 5 , digits = 2)
+gs_ndvi_slope1
+
+gs_ndvi_run2 <- 250 - 125
+gs_ndvi_rise2 <- 1.722415 - 0.6404977 
+gs_ndvi_slope2 <- round((gs_ndvi_rise2 / gs_ndvi_run2) * 5 , digits = 3)
+gs_ndvi_slope2
+
+gs_ndvi_run3 <- 400 - 250
+gs_ndvi_rise3 <- 2.128135 - 1.722415
+gs_ndvi_slope3 <- round((gs_ndvi_rise3 / gs_ndvi_run3) * 5 , digits = 3)
+gs_ndvi_slope3
+
+gs_ndvi_mean_se <- gs_ndvi_emmeans_contrast %>% 
+  select(SE) %>% 
+  summarise(mean_se = mean(SE))
+
+gs_ndvi_mean_se$mean_se <- round(gs_ndvi_mean_se$mean_se , digits = 2)
+
+gs_ndvi_mean_se$mean_se
+
+```
+
+###confidence interval
+
+```{r}
+
+#at every 0.10 interval, what is the 90% confidence interval of the yield response, and what RI value does that range correspond with?
+
+str(gs_ndvi_emmeans_contrast , give.attr = F)
+
+gs_ndvi_emmeans_contrast <- gs_ndvi_emmeans_contrast %>% 
+  mutate(response_mgha_r = round(estimate , digits = 3),
+         se_mgha_r = round(SE , digits = 3))
+
+gs_ndvi_emmeans_contrast_ci <- gs_ndvi_emmeans_contrast %>% 
+  filter(response_mgha_r %in% c(0 , .1 , .2 , .3 , .4 , .5 , .6 , .7 , .8 , .9, 1)) %>% 
+  select(GS_NDVI_Response_Index, GS_NDVI_Response_Index_r , response_mgha_r , se_mgha_r)
+
+gs_ndvi_emmeans_contrast <- gs_ndvi_emmeans_contrast %>% 
+  mutate(z_score = 1.645 ,
+         lower_limit = round(response_mgha_r - (z_score * se_mgha_r) , digits = 3),
+         upper_limit = round(response_mgha_r + (z_score * se_mgha_r) , digits = 3))
+
+z_score <- 1.645
+
+#estimate = 0.10 , SE = 0.120
+
+print(round(0.10 - z_score*0.120 , digits = 2))
+print(round(0.10 + z_score*0.120 , digits = 2))
+
+#estimate = 0.20 , SE = 0.112
+
+print(round(0.20 - z_score*0.112 , digits = 2))
+print(round(0.20 + z_score*0.112 , digits = 2))
+
+
+#estimate = 0.30 , SE = 0.106
+
+print(round(0.30 - z_score*0.106 , digits = 2)) 
+print(round(0.30 + z_score*0.106 , digits = 2))
+
+
+#estimate = 0.40 , SE = 0.102
+
+print(round(0.40 - z_score*0.102 , digits = 2)) 
+print(round(0.40 + z_score*0.102 , digits = 2))
+
+#estimate = 0.50 , SE = 0.102
+
+print(round(0.50 - z_score*0.102 , digits = 2)) 
+print(round(0.50 + z_score*0.102 , digits = 2))
+
+#estimate = 0.60 , SE = 0.105
+
+print(round(0.60 - z_score*0.105 , digits = 2)) 
+print(round(0.60 + z_score*0.105 , digits = 2))
+
+#estimate = 0.70 , SE = 0.111
+
+print(round(0.70 - z_score*0.111 , digits = 2)) 
+print(round(0.70 + z_score*0.111 , digits = 2))
+
+#estimate = 0.80 , SE = 0.119
+
+print(round(0.80 - z_score*0.119 , digits = 2)) 
+print(round(0.80 + z_score*0.119 , digits = 2))
+
+#estimate = 0.90 , SE = 0.130
+
+print(round(0.90 - z_score*0.130 , digits = 2)) 
+print(round(0.90 + z_score*0.130 , digits = 2))
+
+#estimate = 1.00 , SE = 0.141
+
+print(round(1.00 - z_score*0.141 , digits = 2)) 
+print(round(1.00 + z_score*0.141 , digits = 2))
+```
+
+##sUAS NDVI-RI
+
+
+```{r}
+
+sUAS_ndvi_data <- paper3_data_no_2018 %>% 
+  filter(Platform == "sUAS_NDVI")
+
+ctrl <- lmeControl(opt = "optim") #changes control to "optimal" settings
+
+sUAS_ndvi_model <- lme(GrainYield_Mgha ~ SI * TopDress_kgha + I(SI*SI)  ,
+             control = ctrl ,
+             random = ~ I(TopDress_kgha) | site_year  , 
+             data = sUAS_ndvi_data)
+
+summary(sUAS_ndvi_model)
+
+summary(sUAS_ndvi_model)$tTable
+
+Anova(sUAS_ndvi_model , type = 3)
+
+r.squaredGLMM(sUAS_ndvi_model)
+
+```
+
+### model diagnostics
+
+```{r}
+
+plot (sUAS_ndvi_model)
+
+plot(resid(sUAS_ndvi_model, type = "normalized") ~fitted(sUAS_ndvi_model))
+
+sUAS_ndvi_model_y <- resid(sUAS_ndvi_model, type = "normalized")
+sUAS_ndvi_model_x <- fitted(sUAS_ndvi_model)
+
+sUAS_ndvi_modelresid_data <- data.frame(sUAS_ndvi_model_x , sUAS_ndvi_model_y)
+
+ggplot( data = sUAS_ndvi_modelresid_data , aes( x = sUAS_ndvi_model_x , y = sUAS_ndvi_model_y)) +
+  geom_point(mapping = aes(sUAS_ndvi_model_x , sUAS_ndvi_model_y) , data = sUAS_ndvi_modelresid_data)
+
+hist(resid(sUAS_ndvi_model))
+
+
+plot(sUAS_ndvi_model, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUAS_ndvi_model, abline = c(0,1) )
+
+
+qqnorm(resid(sUAS_ndvi_model))
+qqline(resid(sUAS_ndvi_model))
+
+
+qqnorm(sUAS_ndvi_model , ~resid(.) | site_year)
+
+plot(ranef(sUAS_ndvi_model))
+
+pairs(sUAS_ndvi_model , id = 0.1) 
+
+qqnorm(sUAS_ndvi_model , ~ranef(.))
+
+plot( sUAS_ndvi_model, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+###outlier removal 
+
+```{r}
+
+sUAS_ndvi_data_OR <- sUAS_ndvi_data[-(c(which(abs(residuals(sUAS_ndvi_model,type="normalized"))>qnorm(0.999)))),] 
+
+```
+
+###rerun model sans outliers
+```{r}
+
+ctrl <- lmeControl(opt = "optim") #changes control to "optimal" settings
+
+sUAS_ndvi_model_OR <- lme(GrainYield_Mgha ~ SI * TopDress_kgha + I(SI*SI)  ,
+             control = ctrl ,
+             random = ~ I(TopDress_kgha) | site_year  , 
+             data = sUAS_ndvi_data)
+
+summary(sUAS_ndvi_model_OR)
+
+summary(sUAS_ndvi_model_OR)$tTable
+
+Anova(sUAS_ndvi_model_OR , type = 3)
+
+r.squaredGLMM(sUAS_ndvi_model_OR)
+
+ndvi_r_sq <- r.squaredGLMM(sUAS_ndvi_model_OR)
+
+ndvi_r_sq_fixed <- round(ndvi_r_sq[1] , digits = 2)
+ndvi_r_sq_fixed
+
+ndvi_r_sq_total <- round(ndvi_r_sq[2] , digits = 2)
+ndvi_r_sq_total
+
+ndvi_r_sq_random <- ndvi_r_sq_total - ndvi_r_sq_fixed
+ndvi_r_sq_random
+```
+
+### model diagnostics
+
+```{r}
+
+plot (sUAS_ndvi_model_OR)
+
+plot(resid(sUAS_ndvi_model_OR, type = "normalized") ~fitted(sUAS_ndvi_model_OR))
+
+sUAS_ndvi_model_OR_y <- resid(sUAS_ndvi_model_OR, type = "normalized")
+sUAS_ndvi_model_OR_x <- fitted(sUAS_ndvi_model_OR)
+
+sUAS_ndvi_model_ORresid_data <- data.frame(sUAS_ndvi_model_OR_x , sUAS_ndvi_model_OR_y)
+
+ggplot( data = sUAS_ndvi_model_ORresid_data , aes( x = sUAS_ndvi_model_OR_x , y = sUAS_ndvi_model_OR_y)) +
+  geom_point(mapping = aes(sUAS_ndvi_model_OR_x , sUAS_ndvi_model_OR_y) , data = sUAS_ndvi_model_ORresid_data)
+
+hist(resid(sUAS_ndvi_model_OR))
+
+
+plot(sUAS_ndvi_model_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUAS_ndvi_model_OR, abline = c(0,1) )
+
+
+qqnorm(resid(sUAS_ndvi_model_OR))
+qqline(resid(sUAS_ndvi_model_OR))
+
+
+qqnorm(sUAS_ndvi_model_OR , ~resid(.) | site_year)
+
+plot(ranef(sUAS_ndvi_model_OR))
+
+pairs(sUAS_ndvi_model_OR , id = 0.1)
+
+qqnorm(sUAS_ndvi_model_OR , ~ranef(.))
+
+plot( sUAS_ndvi_model_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+
+###emmeans
+
+```{r}
+
+mylist <- list(SI=seq(0.708 , 1 , by = .0001),TopDress_kgha =c( 34 , 0))
+
+sUAS_ndvi_emmeans <- emmeans(sUAS_ndvi_model_OR , ~TopDress_kgha * SI , at = mylist )
+
+sUAS_ndvi_emmeans_contrast <- as.data.frame(summary(contrast(sUAS_ndvi_emmeans , "pairwise" , side = ">" , by = "SI"))[1:7])
+
+sUAS_ndvi_emmeans_contrast <- sUAS_ndvi_emmeans_contrast %>% 
+  mutate(sUAS_ndvi_Response_Index = 1 / SI )
+
+sUAS_ndvi_emmeans_contrast <- sUAS_ndvi_emmeans_contrast %>% 
+  mutate(t_score = abs((estimate - 0.26)) / SE)
+
+sUAS_ndvi_emmeans_contrast <- sUAS_ndvi_emmeans_contrast %>% 
+  mutate(prob_greater_than_26 = if_else(estimate < 0.26 , pt(q = t_score , df = df , lower.tail = F) , pt(q = t_score , df = df , lower.tail = T)))
+
+sUAS_ndvi_emmeans_contrast <- sUAS_ndvi_emmeans_contrast %>% 
+  mutate(prob_diff_from_26 = 1 - (pt(q = t_score , df = df , lower.tail = F) + pt(q = -t_score , df = df , lower.tail = T)))
+
+sUAS_ndvi_emmeans_contrast$sUAS_ndvi_Response_Index_r <- (round(sUAS_ndvi_emmeans_contrast$sUAS_ndvi_Response_Index , digits = 3))
+
+sUAS_ndvi_run1 <- 125 - 100
+sUAS_ndvi_rise1 <- 1.596946 - 0.2038182
+sUAS_ndvi_slope1 <- round((sUAS_ndvi_rise1 / sUAS_ndvi_run1) * 5 , digits = 2)
+sUAS_ndvi_slope1
+
+sUAS_ndvi_run2 <- 142 - 125
+sUAS_ndvi_rise2 <- 2.237784 - 1.596946 
+sUAS_ndvi_slope2 <- round((sUAS_ndvi_rise2 / sUAS_ndvi_run2) * 5 , digits = 3)
+sUAS_ndvi_slope2
+
+sUAS_ndvi_mean_se <- sUAS_ndvi_emmeans_contrast %>% 
+  select(SE) %>% 
+  summarise(mean_se = mean(SE))
+
+sUAS_ndvi_mean_se$mean_se <- round(sUAS_ndvi_mean_se$mean_se , digits = 2)
+
+sUAS_ndvi_mean_se$mean_se
+
+```
+
+###confidence interval
+
+```{r}
+
+#at every 0.10 interval, what is the 90% confidence interval of the yield response, and what RI value does that range correspond with?
+
+str(sUAS_ndvi_emmeans_contrast , give.attr = F)
+
+sUAS_ndvi_emmeans_contrast <- sUAS_ndvi_emmeans_contrast %>% 
+  mutate(response_mgha_r = round(estimate , digits = 3),
+         se_mgha_r = round(SE , digits = 3))
+
+sUAS_ndvi_emmeans_contrast_ci <- sUAS_ndvi_emmeans_contrast %>% 
+  filter(response_mgha_r %in% c(0 , .1 , .2 , .3 , .4 , .5 , .6 , .7 , .8 , .9, 1)) %>% 
+  select(sUAS_ndvi_Response_Index, sUAS_ndvi_Response_Index_r , response_mgha_r , se_mgha_r)
+
+sUAS_ndvi_emmeans_contrast <- sUAS_ndvi_emmeans_contrast %>% 
+  mutate(z_score = 1.645 ,
+         lower_limit = round(response_mgha_r - (z_score * se_mgha_r) , digits = 3),
+         upper_limit = round(response_mgha_r + (z_score * se_mgha_r) , digits = 3))
+
+#estimate = 0.20 , SE = 0.116
+
+print(round(0.20 - z_score*0.116 , digits = 2))
+print(round(0.20 + z_score*0.116 , digits = 2))
+
+
+#estimate = 0.30 , SE = 0.107
+
+print(round(0.30 - z_score*0.107 , digits = 2))
+print(round(0.30 + z_score*0.107 , digits = 2))
+
+
+#estimate = 0.40 , SE = 0.102
+
+print(round(0.40 - z_score*0.102 , digits = 2))
+print(round(0.40 + z_score*0.102 , digits = 2))
+
+#estimate = 0.50 , SE = 0.100
+
+print(round(0.50 - z_score*0.100 , digits = 2))
+print(round(0.50 + z_score*0.100 , digits = 2))
+
+#estimate = 0.60 , SE = 0.104
+
+print(round(0.60 - z_score*0.104 , digits = 2)) 
+print(round(0.60 + z_score*0.104 , digits = 2))
+
+#estimate = 0.70 , SE = 0.112
+
+print(round(0.70 - z_score*0.112 , digits = 2)) 
+print(round(0.70 + z_score*0.112 , digits = 2))
+
+#estimate = 0.80 , SE = 0.123
+
+print(round(0.80 - z_score*0.123 , digits = 2)) 
+print(round(0.80 + z_score*0.123 , digits = 2))
+
+#estimate = 0.90 , SE = 0.137
+
+print(round(0.90 - z_score*0.137 , digits = 2)) 
+print(round(0.90 + z_score*0.137 , digits = 2))
+
+#estimate = 1.00 , SE = 0.153
+
+print(round(1.00 - z_score*0.153 , digits = 2)) 
+print(round(1.00 + z_score*0.153 , digits = 2))
+
+```
+
+##sUAS NDRE-RI
+
+```{r}
+
+sUAS_ndre_data <- paper3_data_no_2018 %>% 
+  filter(Platform == "sUAS_NDRE")
+
+ctrl <- lmeControl(opt = "optim") #changes control to "optimal" settings
+
+sUAS_ndre_model <- lme(GrainYield_Mgha ~ SI * TopDress_kgha + I(SI*SI)  ,
+             control = ctrl ,
+             random = ~ I(TopDress_kgha) | site_year  , 
+             data = sUAS_ndre_data)
+
+summary(sUAS_ndre_model)
+
+summary(sUAS_ndre_model)$tTable
+
+Anova(sUAS_ndre_model , type = 3)
+
+r.squaredGLMM(sUAS_ndre_model)
+
+```
+
+### model diagnostics
+
+```{r}
+
+plot (sUAS_ndre_model)
+
+plot(resid(sUAS_ndre_model, type = "normalized") ~fitted(sUAS_ndre_model))
+
+sUAS_ndre_model_y <- resid(sUAS_ndre_model, type = "normalized")
+sUAS_ndre_model_x <- fitted(sUAS_ndre_model)
+
+sUAS_ndre_modelresid_data <- data.frame(sUAS_ndre_model_x , sUAS_ndre_model_y)
+
+ggplot( data = sUAS_ndre_modelresid_data , aes( x = sUAS_ndre_model_x , y = sUAS_ndre_model_y)) +
+  geom_point(mapping = aes(sUAS_ndre_model_x , sUAS_ndre_model_y) , data = sUAS_ndre_modelresid_data)
+
+hist(resid(sUAS_ndre_model))
+
+
+plot(sUAS_ndre_model, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUAS_ndre_model, abline = c(0,1) )
+
+
+qqnorm(resid(sUAS_ndre_model))
+qqline(resid(sUAS_ndre_model))
+
+
+qqnorm(sUAS_ndre_model , ~resid(.) | site_year)
+
+plot(ranef(sUAS_ndre_model))
+
+pairs(sUAS_ndre_model , id = 0.1) 
+
+qqnorm(sUAS_ndre_model , ~ranef(.))
+
+plot( sUAS_ndre_model, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+###outlier removal 
+
+```{r}
+
+sUAS_ndre_data_OR <- sUAS_ndre_data[-(c(which(abs(residuals(sUAS_ndre_model, type = "normalized"))>qnorm(0.999)))),]
+
+```
+
+###rerun model sans outliers
+```{r}
+
+ctrl <- lmeControl(opt = "optim") #changes control to "optimal" settings
+
+sUAS_ndre_model_OR <- lme(GrainYield_Mgha ~ SI * TopDress_kgha + I(SI*SI)  ,
+             control = ctrl ,
+             random = ~ I(TopDress_kgha) | site_year  , 
+             data = sUAS_ndre_data_OR)
+
+summary(sUAS_ndre_model_OR)
+
+summary(sUAS_ndre_model_OR)$tTable
+
+Anova(sUAS_ndre_model_OR , type = 3)
+
+ndre_r_sq <- r.squaredGLMM(sUAS_ndre_model_OR)
+
+ndre_r_sq_fixed <- round(ndre_r_sq[1] , digits = 2)
+ndre_r_sq_fixed
+
+ndre_r_sq_total <- round(ndre_r_sq[2] , digits = 2)
+ndre_r_sq_total
+
+ndre_r_sq_random <- ndre_r_sq_total - ndre_r_sq_fixed
+ndre_r_sq_random
+
+
+```
+
+### model diagnostics
+
+```{r}
+
+plot (sUAS_ndre_model_OR)
+
+plot(resid(sUAS_ndre_model_OR, type = "normalized") ~fitted(sUAS_ndre_model_OR))
+
+sUAS_ndre_model_OR_y <- resid(sUAS_ndre_model_OR, type = "normalized")
+sUAS_ndre_model_OR_x <- fitted(sUAS_ndre_model_OR)
+
+sUAS_ndre_model_ORresid_data <- data.frame(sUAS_ndre_model_OR_x , sUAS_ndre_model_OR_y)
+
+ggplot( data = sUAS_ndre_model_ORresid_data , aes( x = sUAS_ndre_model_OR_x , y = sUAS_ndre_model_OR_y)) +
+  geom_point(mapping = aes(sUAS_ndre_model_OR_x , sUAS_ndre_model_OR_y) , data = sUAS_ndre_model_ORresid_data)
+
+hist(resid(sUAS_ndre_model_OR))
+
+
+plot(sUAS_ndre_model_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUAS_ndre_model_OR, abline = c(0,1) )
+
+
+qqnorm(resid(sUAS_ndre_model_OR))
+qqline(resid(sUAS_ndre_model_OR))
+
+
+qqnorm(sUAS_ndre_model_OR , ~resid(.) | site_year)
+
+plot(ranef(sUAS_ndre_model_OR))
+
+pairs(sUAS_ndre_model_OR , id = 0.1)
+
+qqnorm(sUAS_ndre_model_OR , ~ranef(.))
+
+plot( sUAS_ndre_model_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+
+###emmeans
+
+```{r}
+
+mylist <- list(SI=seq(0.528 , 1 , by = .0001),TopDress_kgha =c( 34 , 0))
+
+sUAS_ndre_emmeans <- emmeans(sUAS_ndre_model_OR , ~TopDress_kgha * SI , at = mylist )
+
+sUAS_ndre_emmeans_contrast <- as.data.frame(summary(contrast(sUAS_ndre_emmeans , "pairwise" , side = ">" , by = "SI"))[1:7])
+
+sUAS_ndre_emmeans_contrast <- sUAS_ndre_emmeans_contrast %>% 
+  mutate(sUAS_ndre_Response_Index = 1 / SI )
+
+sUAS_ndre_emmeans_contrast <- sUAS_ndre_emmeans_contrast %>% 
+  mutate(prob_postive_resp = (1 - p.value) * 100)
+
+sUAS_ndre_emmeans_contrast <- sUAS_ndre_emmeans_contrast %>% 
+  mutate(t_score = abs((estimate - 0.26)) / SE)
+
+sUAS_ndre_emmeans_contrast <- sUAS_ndre_emmeans_contrast %>% 
+  mutate(prob_greater_than_26 = if_else(estimate < 0.26 , pt(q = t_score , df = df , lower.tail = F) , pt(q = t_score , df = df , lower.tail = T)))
+
+sUAS_ndre_emmeans_contrast$sUAS_ndre_Response_Index_r <- (round(sUAS_ndre_emmeans_contrast$sUAS_ndre_Response_Index , digits = 3))
+
+sUAS_ndre_run1 <- 125 - 100
+sUAS_ndre_rise1 <- 0.7890828 - 0.08455915
+sUAS_ndre_slope1 <- round((sUAS_ndre_rise1 / sUAS_ndre_run1) * 5 , digits = 2)
+sUAS_ndre_slope1
+
+sUAS_ndre_run2 <- 189 - 125
+sUAS_ndre_rise2 <- 1.747235 - 0.7890828 
+sUAS_ndre_slope2 <- round((sUAS_ndre_rise2 / sUAS_ndre_run2) * 5 , digits = 3)
+sUAS_ndre_slope2
+
+sUAS_ndre_mean_se <- sUAS_ndre_emmeans_contrast %>% 
+  select(SE) %>% 
+  summarise(mean_se = mean(SE))
+
+sUAS_ndre_mean_se$mean_se <- round(sUAS_ndre_mean_se$mean_se , digits = 2)
+
+sUAS_ndre_mean_se$mean_se
+
+```
+
+###confidence interval
+
+```{r}
+
+#at every 0.10 interval, what is the 90% confidence interval of the yield response, and what RI value does that range correspond with?
+
+str(sUAS_ndre_emmeans_contrast , give.attr = F)
+
+sUAS_ndre_emmeans_contrast <- sUAS_ndre_emmeans_contrast %>% 
+  mutate(response_mgha_r = round(estimate , digits = 3),
+         se_mgha_r = round(SE , digits = 3))
+
+sUAS_ndre_emmeans_contrast_ci <- sUAS_ndre_emmeans_contrast %>% 
+  filter(response_mgha_r %in% c(0 , .1 , .2 , .3 , .4 , .5 , .6 , .7 , .8 , .9, 1)) %>% 
+  select(sUAS_ndre_Response_Index, sUAS_ndre_Response_Index_r , response_mgha_r , se_mgha_r)
+
+sUAS_ndre_emmeans_contrast <- sUAS_ndre_emmeans_contrast %>% 
+  mutate(z_score = 1.645 ,
+         lower_limit = round(response_mgha_r - (z_score * se_mgha_r) , digits = 3),
+         upper_limit = round(response_mgha_r + (z_score * se_mgha_r) , digits = 3))
+
+#estimate = 0.10 , SE = 0.110
+
+print(round(0.10 - z_score*0.110 , digits = 2))
+print(round(0.10 + z_score*0.110 , digits = 2))
+
+#estimate = 0.20 , SE = 0.101
+
+print(round(0.20 - z_score*0.101 , digits = 2))
+print(round(0.20 + z_score*0.101 , digits = 2))
+
+
+#estimate = 0.30 , SE = 0.094
+
+print(round(0.30 - z_score*0.094 , digits = 2))
+print(round(0.30 + z_score*0.094 , digits = 2))
+
+
+#estimate = 0.40 , SE = 0.091
+
+print(round(0.40 - z_score*0.091 , digits = 2))
+print(round(0.40 + z_score*0.091 , digits = 2))
+
+#estimate = 0.50 , SE = 0.090
+
+print(round(0.50 - z_score*0.090 , digits = 2))
+print(round(0.50 + z_score*0.090 , digits = 2))
+
+#estimate = 0.60 , SE = 0.093
+
+print(round(0.60 - z_score*0.093 , digits = 2)) 
+print(round(0.60 + z_score*0.093 , digits = 2))
+
+#estimate = 0.70 , SE = 0.100
+
+print(round(0.70 - z_score*0.100 , digits = 2)) 
+print(round(0.70 + z_score*0.100 , digits = 2))
+
+#estimate = 0.80 , SE = 0.108
+
+print(round(0.80 - z_score*0.108 , digits = 2)) 
+print(round(0.80 + z_score*0.108 , digits = 2))
+
+#estimate = 0.90 , SE = 0.119
+
+print(round(0.90 - z_score*0.119 , digits = 2)) 
+print(round(0.90 + z_score*0.119 , digits = 2))
+
+#estimate = 1.00 , SE = 0.131
+
+print(round(1.00 - z_score*0.131 , digits = 2)) 
+print(round(1.00 + z_score*0.131 , digits = 2))
+
+```
+
+#FIGURES
+
+##FIGURE 2
+
+```{r}
+
+
+
+#This plot is for the legend
+Fig2_legend1 <- ggplot( data = paper3_data , aes(x = Index)) +
+  geom_histogram( data = paper3_data , aes(x = Index , color = Platform) , binwidth = .01 , fill = "grey") +
+  coord_cartesian(xlim = c(0 , 1) , ylim = c(0,80)) +
+  scale_y_continuous(breaks = seq(0,100 , by = 10)) +
+  scale_x_continuous(breaks = seq(0 , 1 , by = 0.1)) +
+  scale_color_manual( name = "Index" , labels = c("GreenSeeker NDVI" , "sUAS NDVI" , "sUAS NDRE") , values = c( "firebrick3" , "dodgerblue3" , "forestgreen")) +
+  theme(legend.text = element_text(size = 26),
+        legend.title = element_text(size = 26))
+
+legend1 <- get_legend(Fig2_legend1)
+
+Fig2_legend2 <- ggplot( data = paper3_data , aes(x = Index)) +
+  geom_histogram( data = paper3_data , aes(x = Index , color = Platform) , binwidth = .01 , fill = "grey") +
+  coord_cartesian(xlim = c(0 , 1) , ylim = c(0,80)) +
+  scale_y_continuous(breaks = seq(0,100 , by = 10)) +
+  scale_x_continuous(breaks = seq(0 , 1 , by = 0.1)) +
+  scale_color_manual( name = "Response Index" , labels = c("GreenSeeker NDVI" , "sUAS NDVI" , "sUAS NDRE") , values = c( "firebrick3" , "dodgerblue3" , "forestgreen")) +
+  theme(legend.text = element_text(size = 26),
+        legend.title = element_text(size = 26))
+
+legend2 <- get_legend(Fig2_legend2)
+
+```
+
+##FIG 2.1
+```{r}
+
+gs_ndvi_hist <- ggplot( data = paper3_gsdata , aes(x = Index)) +
+  geom_histogram( data = paper3_gsdata , aes(x = Index , color = Platform) , binwidth = .01 , fill = "grey" , color = "firebrick3") +
+  theme_classic() +
+  coord_cartesian(xlim = c(0 , 1) , ylim = c(0,80)) +
+  scale_y_continuous(breaks = seq(0,80 , by = 20)) +
+  scale_x_continuous(breaks = seq(0 , 1 , by = 0.1)) +
+  theme(legend.position = "none")+
+  labs(x = NULL , y = NULL) +
+  theme(axis.text = element_text(size = 30))
+
+gs_ndvi_hist
+
+suas_ndvi_hist <- ggplot( data = paper3_uas_ndvi_data , aes(x = Index)) +
+  geom_histogram( data = paper3_uas_ndvi_data , aes(x = Index ) , binwidth = .01 , fill = "grey" , color = "dodgerblue3") +
+  theme_classic() +
+  coord_cartesian(xlim = c(0 , 1) , ylim = c(0,80)) +
+  scale_y_continuous(breaks = seq(0,80 , by = 20)) +
+  scale_x_continuous(breaks = seq(0 , 1 , by = 0.1)) +
+  theme(legend.position = "none") +
+  labs(x = NULL , y = NULL) +
+  theme(axis.text = element_text(size = 30))
+  
+suas_ndvi_hist
+
+suas_ndre_hist <- ggplot( data = paper3_uas_ndre_data , aes(x = Index)) +
+  geom_histogram( data = paper3_uas_ndre_data , aes(x = Index ) , binwidth = .01 , fill = "grey" , color = "forestgreen") +
+  theme_classic() +
+  coord_cartesian(xlim = c(0 , 1) , ylim = c(0,80)) +
+  scale_y_continuous(breaks = seq(0, 80 , by = 20)) +
+  scale_x_continuous(breaks = seq(0 , 1 , by = 0.1)) +
+  theme(legend.position = "none") +
+  labs(x = NULL , y = NULL) +
+  theme(axis.text = element_text(size = 30))
+  
+suas_ndre_hist
+
+suas_ndre_hist <- ggdraw() +
+  draw_plot(suas_ndre_hist) +
+  draw_plot(legend1 , x = -.05 , y = .3 , width = .5 , height = .5)
+
+Fig2_grid <- grid.arrange(arrangeGrob(gs_ndvi_hist,
+                                      suas_ndvi_hist,
+                                      suas_ndre_hist,
+                                      bottom = textGrob("Index Value", gp = gpar(fontsize = 32)),
+                                      left = textGrob("Frequency", gp = gpar(fontsize = 32) , rot = 90)
+                                      ))
+
+ggsave("FIGURES/Paper3_Fig_2.1.tiff" , Fig2_grid , compression = "lzw" , width = 16 , height = 16, type = "cairo" , dpi = 750)
+
+```
+
+```{r}
+
+Fig2 <- ggplot( data = paper3_data, aes( x = Index)) + 
+    geom_histogram(data = subset(paper3_data , Platform == 'GreenSeeker_NDVI') , aes(x = Index , fill = Platform ) , binwidth = .01 , alpha = 0.5) +
+    geom_histogram(data = subset(paper3_data , Platform == 'sUAS_NDVI'), aes(x = Index , fill = Platform ) , binwidth = .01 , alpha = 0.5) +
+    geom_histogram(data = subset(paper3_data , Platform == 'sUAS_NDRE'), aes(x = Index , fill = Platform ) , binwidth = .01 , alpha = 0.5) +
+  theme_classic() +
+  coord_cartesian(xlim = c(0.15 , .95) , ylim = c(0,80)) +
+  scale_y_continuous(breaks = seq(0,100 , by = 10)) +
+  scale_x_continuous(breaks = seq(0 , 1 , by = 0.1)) +
+  labs(x = "Index Value" , y = "Frequency") +
+  theme(axis.title = element_text(size = 28),
+        axis.text = element_text(size = 28),
+        legend.text = element_text(size = 24),
+        legend.title = element_text(size = 24)) +
+  geom_hline(yintercept = 0) +
+  scale_fill_discrete( name = "Index" , labels = c("GreenSeeker NDVI" , "sUAS NDVI" , "sUAS NDRE")) +
+  geom_segment(aes(x = 0.65, y = 0, xend = 0.65, yend = Inf), linetype = "dashed" , size  = 2 , alpha = 0.5 , color = "#F8766D" ) +
+  geom_segment(aes(x = 0.88, y = 0, xend = 0.88, yend = Inf) ,linetype = "dashed" , size = 2 , alpha = 0.5 , color = "#619CFF" ) +
+  geom_segment(aes(x = 0.60, y = 0, xend = 0.60, yend = Inf), linetype = "dashed" , size = 2 , alpha = 0.5 , color = "#00BA38")
+
+Fig2
+
+ggsave("FIGURES/NOT_IN_PUBLICATION/Paper3_Fig_2.tiff" , Fig2 , compression = "lzw" , width = 16 , height = 12, type = "cairo" , dpi = 750)
+
+```
+
+##FIG 2.2
+```{r}
+
+gs_ndvi_ri_hist <- ggplot( data = paper3_gsdata , aes(x = RI)) +
+  geom_histogram( data = paper3_gsdata , aes(x = RI , color = Platform) , binwidth = .05 , fill = "grey" , color = "firebrick3") +
+  theme_classic() +
+  coord_cartesian(xlim = c(1,4) , ylim = c(0, 325)) +
+  scale_x_continuous(breaks = seq(1,4 , by = 0.5)) +
+  theme(legend.position = "none") +
+  labs(x = NULL , y = NULL) +
+  theme(axis.text = element_text(size = 30))
+
+gs_ndvi_ri_hist
+
+suas_ndvi_ri_hist <- ggplot( data = paper3_uas_ndvi_data , aes(x = RI)) +
+  geom_histogram( data = paper3_uas_ndvi_data , aes(x = RI ) , binwidth = .05 , fill = "grey" , color = "dodgerblue3") +
+  theme_classic() +
+  coord_cartesian(xlim = c(1,4) , ylim = c(0, 325)) +
+  scale_x_continuous(breaks = seq(1,4 , by = 0.5)) +
+  theme(legend.position = "none") +
+  labs(x = NULL , y = NULL) +
+  theme(axis.text = element_text(size = 30))
+  
+suas_ndvi_ri_hist
+
+suas_ndre_ri_hist <- ggplot( data = paper3_uas_ndre_data , aes(x = RI)) +
+  geom_histogram( data = paper3_uas_ndre_data , aes(x = RI ) , binwidth = .05 , fill = "grey" , color = "forestgreen") +
+  theme_classic() +
+  coord_cartesian(xlim = c(1,4) , ylim = c(0, 325)) +
+  scale_x_continuous(breaks = seq(1 , 4 , by = 0.5)) +
+  theme(legend.position = "none") +
+  labs(x = NULL , y = NULL) +
+  theme(axis.text = element_text(size = 30))
+  
+suas_ndre_ri_hist
+
+suas_ndre_ri_hist <- ggdraw() +
+  draw_plot(suas_ndre_ri_hist) +
+  draw_plot(legend2 , x = .6 , y = .1 , width = .5 , height = .5)
+
+Fig2_grid2 <- grid.arrange(arrangeGrob(gs_ndvi_ri_hist,
+                                      suas_ndvi_ri_hist,
+                                      suas_ndre_ri_hist,
+                                      bottom = textGrob("Response Index Value", gp = gpar(fontsize = 32)),
+                                      left = textGrob("Frequency", gp = gpar(fontsize = 32) , rot = 90)
+                                      ))
+
+ggsave("FIGURES/Paper3_Fig_2.2.tiff" , Fig2_grid2 , compression = "lzw" , width = 16 , height = 16, type = "cairo" , dpi = 750)
+
+```
+
+```{r}
+
+Fig2_el_granddaddy <- grid.arrange(arrangeGrob(gs_ndvi_hist, suas_ndvi_hist, suas_ndre_hist,
+                                               gs_ndvi_ri_hist, suas_ndvi_ri_hist, suas_ndre_ri_hist,
+                                      nrow = 2,
+                                      ncol = 3))
+
+ggsave("FIGURES/NOT_IN_PUBLICATION/Fig2_el_granddaddy.tiff" , Fig2_el_granddaddy , compression = "lzw" , width = 20 , height = 20, type = "cairo" , dpi = 750)
+
+```
+
+```{r}
+
+Fig2.2 <- ggplot( data = paper3_data, aes( x = RI)) + 
+    geom_histogram(data = subset(paper3_data , Platform == 'GreenSeeker_NDVI') , aes(x = RI , fill = Platform ) , binwidth = .1 , alpha = 0.5) +
+    geom_histogram(data = subset(paper3_data , Platform == 'sUAS_NDVI'), aes(x = RI , fill = Platform ) , binwidth = .1 , alpha = 0.5) +
+    geom_histogram(data = subset(paper3_data , Platform == 'sUAS_NDRE'), aes(x = RI , fill = Platform ) , binwidth = .1 , alpha = 0.5) +
+  theme_classic() +
+  coord_cartesian(xlim = c(1 , 4) ) +
+  scale_x_continuous(breaks = seq(1 , 4 , by = 1)) +
+  labs(x = "Response Index Value" , y = "Frequency") +
+  theme(axis.title = element_text(size = 28),
+        axis.text = element_text(size = 28),
+        legend.text = element_text(size = 24),
+        legend.title = element_text(size = 24)) +
+  geom_hline(yintercept = 0) +
+  scale_fill_discrete( name = "Index" , labels = c("GreenSeeker NDVI" ,  "sUAS NDRE" , "sUAS NDVI" )) 
+
+Fig2.2
+
+ggsave("FIGURES/NOT_IN_PUBLICATION/Paper3_Fig_2.2.tiff" , Fig2.2 , compression = "lzw" , width = 20 , height = 12, type = "cairo" , dpi = 750)
+
+```
+
+##FIGURE 3
+
+```{r}
+
+platform <- data.frame( 
+  label = c("NDVI[GS]" ,
+            "NDVI[UAS]",
+            "NDRE[UAS]"
+) ,
+  Platform = c("GreenSeeker_NDVI" ,
+               "sUAS_NDVI" ,
+            "sUAS_NDRE"
+            ),
+  x_position = c(Inf , Inf , Inf ),
+  x_just_var = c( 2.5 , 2.2 , 2) ,
+  y_position = c(-Inf , -Inf , -Inf ),
+  y_just_var = c(-12 , -12 , -12)
+  )
+
+equation <- data.frame( 
+  label = c(gs_ndvi_qm_eqn,
+            sUAS_ndvi_qm_eqn,
+            sUAS_ndre_qm_eqn
+            ) ,
+  Platform = c("GreenSeeker_NDVI" ,
+               "sUAS_NDVI" ,
+            "sUAS_NDRE" 
+            ),
+  x_position = c(Inf , Inf , Inf ),
+  x_just_var = c(1.05 , 1.05 , 1.05) ,
+  y_position = c(-Inf , -Inf , -Inf ),
+  y_just_var = c(-8 , -8 , -8)
+  )
+
+rsquared <- data.frame( 
+  label = c("R^2 == '0.80'",
+            "R^2 == '0.80'" ,
+            "R^2 == '0.82'" 
+            ) ,
+  Platform = c("GreenSeeker_NDVI" ,
+               "sUAS_NDVI",
+            "sUAS_NDRE" 
+            ),
+  x_position = c(Inf , Inf , Inf ),
+  x_just_var = c(2.25 , 2.25 , 2) ,
+  y_position = c(-Inf , -Inf , -Inf ),
+  y_just_var = c(-8.5 , -8.5 , -8.5)
+  )
+
+asymptote <- data.frame( 
+  label = c("N[UP] == 173~kg~N~ha^-1",
+            "N[UP] == 164~kg~N~ha^-1" ,
+            "N[UP] == 208~kg~N~ha^-1" 
+            ) ,
+  Platform = c("GreenSeeker_NDVI" ,
+               "sUAS_NDVI",
+            "sUAS_NDRE" 
+            ),
+  x_position = c(Inf , Inf , Inf ),
+  x_just_var = c(1.25 , 1.25 , 1.2) ,
+  y_position = c(-Inf , -Inf , -Inf ),
+  y_just_var = c(-5.75 , -5.75 , -5.75)
+  )
+
+platform$Platform = factor(platform$Platform, levels=c("GreenSeeker_NDVI" , "sUAS_NDVI" , "sUAS_NDRE"))
+equation$Platform = factor(equation$Platform, levels=c("GreenSeeker_NDVI" , "sUAS_NDVI" , "sUAS_NDRE"))
+rsquared$Platform = factor(rsquared$Platform, levels=c("GreenSeeker_NDVI" , "sUAS_NDVI" , "sUAS_NDRE"))
+asymptote$Platform = factor(asymptote$Platform, levels=c("GreenSeeker_NDVI" , "sUAS_NDVI" , "sUAS_NDRE"))
+gs_ndvi_qm_df$Platform = as.factor(gs_ndvi_qm_df$Platform)
+sUAS_ndvi_qm_df$Platform = as.factor(sUAS_ndvi_qm_df$Platform)
+sUAS_ndre_qm_df$Platform = as.factor(sUAS_ndre_qm_df$Platform)
+asym_data_gs_ndvi <- data.frame(x = gs_ndvi_qm_sym_x , y = gs_ndvi_qm_sym_y , xend = gs_ndvi_qm_sym_x , yend = .4 , Platform = factor("GreenSeeker_NDVI"))
+asym_data_sUAS_ndvi <- data.frame(yint = sUAS_ndvi_qm_sym_y , Platform = factor("sUAS_NDVI"))
+asym_data_sUAS_ndre <- data.frame(yint = sUAS_ndre_qm_sym_y , Platform = factor("sUAS_NDRE"))
+
+label_text <- data.frame( 
+  label = c("A" ,
+            "B",
+            "C"
+) ,
+  Platform = factor(c("GreenSeeker_NDVI" ,
+               "sUAS_NDVI" ,
+            "sUAS_NDRE"
+            )),
+  x_position = c(0 , 0 , 0 ) ,
+  y_position = c(1 , 1 , 1 ))
+
+Nup_fig <- ggplot( data = paper3_data , aes ( x = PI_N_Uptake , y = Index )) +
+  geom_point( mapping = aes( x = PI_N_Uptake , 
+                             y = Index , 
+                             shape = year,
+                             color = year) ,
+              size = 4 ,
+              data = paper3_data) +
+  labs( x = "PI Total N Uptake ( kg N ha"^-1~")" , 
+        y = "Index Value",  
+        shape = "Year",
+        color = "Year") +
+  facet_grid(~Platform ) +
+  theme_classic() +
+  theme(axis.title = element_text(size = 30),
+        axis.text = element_text(size = 26),
+        legend.text = element_text(size = 26),
+        legend.title = element_text(size = 26),
+        #legend.position = "none",
+        panel.spacing = unit(1.5, "lines"),
+        panel.background = element_rect(fill = "white", color = "grey0"),
+        strip.text.x = element_blank()) +
+  coord_cartesian(ylim = c(0 , 1) , xlim = c(0, 260)) +
+  scale_y_continuous(breaks = seq(0 , 1 , by = .1)) +
+  scale_x_continuous(breaks = seq(0 , 250, by = 50)) +
+  scale_shape_manual(values = c(0 , 1 , 2)) +
+  geom_text( data = label_text ,
+             mapping = aes( x = x_position ,
+                            y = y_position , 
+                            label = label) , 
+             size = 9 ,
+             parse = T)
+
+
+Nup_fig
+
+
+Fig3 <- Nup_fig +
+  geom_line(data = gs_ndvi_qm_df , aes(x = gsndvi_df$PI_N_Uptake , y = gs_ndvi_fit_qm ) , size = 2 , color = "black") +
+  geom_line(data = sUAS_ndvi_qm_df , aes(x = sUASndvi_df$PI_N_Uptake , y = sUAS_ndvi_fit_qm ),  size = 2  , color = "black") +
+  geom_line(data = sUAS_ndre_qm_df , aes(x = sUASndre_df$PI_N_Uptake , y = sUAS_ndre_fit_qm ),  size = 2  , color = "black") +
+  geom_text( data = platform ,
+             mapping = aes( x = x_position ,
+                            hjust = x_just_var , 
+                            y = y_position , 
+                            vjust = y_just_var , 
+                            label = label) , 
+             size = 6 ,
+             parse = T) +
+  geom_text( data = equation ,
+             mapping = aes( x = x_position ,
+                            hjust = x_just_var , 
+                            y = y_position , 
+                            vjust = y_just_var , 
+                            label = label) , 
+             size = 6 ,
+             parse = T) +
+  geom_text( data = rsquared ,
+             mapping = aes( x = x_position ,
+                            hjust = x_just_var , 
+                            y = y_position , 
+                            vjust = y_just_var , 
+                            label = label) , 
+             size = 6 ,
+             parse = T) +
+  geom_text( data = asymptote ,
+             mapping = aes( x = x_position ,
+                            hjust = x_just_var , 
+                            y = y_position , 
+                            vjust = y_just_var , 
+                            label = label) , 
+             size = 6 ,
+             parse = T)
+
+Fig3
+
+ggsave("FIGURES/Paper3_Fig_3.tiff" , Fig3 , compression = "lzw" , width = 19 , height = 9.5, type = "cairo" , dpi = 500)
+
+```
+
+##FIGURE 4
+
+```{r}
+
+estimated_yield_response <- seq(0.1 , 1 , by = 0.1)
+index <- as.factor("GreenSeeker NDVI")
+RI <- c('1.000' , '1.037' , '1.078' , '1.123' , '1.172' , 1.225 , 1.283 , 1.347 , 1.417 , 1.496)
+lower_limit <- c('1.000' , '1.000', '1.010' , '1.049' , '1.091' , 1.137 , 1.182 , 1.225 , 1.276 , 1.327)
+upper_limit <- c('1.078' , '1.114' , '1.157' , '1.208' , '1.265' , 1.327 , 1.403 , 1.496 , 1.592 , 1.714)
+position <- seq(0.09 , 0.99 , by = 0.1)
+
+ci_plot_data1 <- data.frame(index ,
+                              estimated_yield_response ,
+                              RI ,
+                              lower_limit ,
+                              upper_limit ,
+                              position)
+
+estimated_yield_response <- seq(0.1 , 1 , by = 0.1)
+index <- as.factor("sUAS NDVI")
+RI <- c(NA , '1.000' , '1.014' , '1.029' , '1.044' , 1.060 , 1.077 , 1.094 , 1.112 , 1.130)
+lower_limit <- c(NA , '1.000' , '1.000', '1.003' , '1.020' , 1.033 , 1.048 , 1.060 , 1.072 , 1.086 )
+upper_limit <- c(NA , '1.027' , '1.039' , '1.056' , '1.070' , 1.089 , 1.108 , 1.130 , 1.155 , 1.178 )
+position <- seq(0.1 , 1 , by = 0.1)
+
+ci_plot_data2 <- data.frame(index ,
+                              estimated_yield_response ,
+                              RI ,
+                              lower_limit ,
+                              upper_limit ,
+                              position)
+
+estimated_yield_response <- seq(0.1 , 1 , by = 0.1)
+index <- as.factor("sUAS NDRE")
+RI <- c('1.003' , '1.033' , '1.065' , '1.098' , '1.134' , 1.172 , 1.212 , 1.256 , 1.303 , 1.353)
+lower_limit <- c('1.000' , '1.000' , '1.018', '1.049' , '1.081' , 1.116 , 1.149 , 1.180 , 1.212 , 1.247 )
+upper_limit <- c('1.058' , '1.088' , '1.116' , '1.152' , '1.192' , 1.234 , 1.284 , 1.343 , 1.408 , 1.479 )
+position <- seq(0.11 , 1.01 , by = 0.1)
+
+ci_plot_data3 <- data.frame(index ,
+                              estimated_yield_response ,
+                              RI ,
+                              lower_limit ,
+                              upper_limit ,
+                              position)
+
+ci_plot_data <- rbind(ci_plot_data1 , ci_plot_data2 , ci_plot_data3)
+
+ci_plot_data$RI <- as.numeric(ci_plot_data$RI)
+ci_plot_data$lower_limit <- as.numeric(ci_plot_data$lower_limit)
+ci_plot_data$upper_limit <- as.numeric(ci_plot_data$upper_limit)
+
+```
+
+```{r}
+
+Fig4 <- ggplot(data = ci_plot_data , aes (  x = RI , y = estimated_yield_response)) +
+  geom_point(data = ci_plot_data , aes(x = RI , y = position , color = index)) +
+  geom_errorbar( data = ci_plot_data , aes(x = RI , y = position , xmin = lower_limit , xmax = upper_limit , color = index) , size = .7 , width = .01) +
+  theme_classic() +
+  scale_x_continuous(breaks = seq(1 , 1.28 , by = 0.05)) +
+  coord_cartesian(ylim = c(0.08,.52) , xlim = c(1,1.28)) +
+  geom_vline(xintercept = 1) +
+  scale_color_manual(labels = c("GreenSeeker NDVI" , "sUAS NDVI" , "sUAS NDRE") , 
+                     values = c( "firebrick3" , "dodgerblue3" , "forestgreen")) +
+  labs(y = "Estimated Grain Yield Response to Top-Dress N ( Mg ha"^-1~")" , x = "Response Index" , color = "Response Index") +
+  theme(axis.title = element_text(size = 26),
+        axis.text = element_text(size = 26),
+        legend.text = element_text(size = 24),
+        legend.title = element_text(size = 24))
+
+Fig4
+
+legend3 <- get_legend(Fig4)
+
+Fig4 <- Fig4 +
+  theme(legend.position = "none")
+
+Fig4 <- ggdraw() +
+  draw_plot(Fig4) +
+  draw_plot(legend3 , x = .6 , y = -0.05 , width = .5 , height = .5)
+
+ggsave("FIGURES/Paper3_Fig_4.tiff" , Fig4 , compression = "lzw" , width = 16 , height = 12, type = "cairo" , dpi = 500)
+
+
+```
+
+
+```{r}
+
+
+Fig4.2 <- ggplot(data = ci_plot_data , aes (y = RI , x = estimated_yield_response)) +
+  geom_pointrange( data = ci_plot_data , aes(y = RI , x = position , ymin = lower_limit , ymax = upper_limit , color = index) , size = 1) +
+  theme_classic() +
+  scale_y_continuous(breaks = seq(1 , 2 , by = 0.1)) +
+  scale_x_continuous(breaks = seq(.1 , 1 , by = 0.1)) +
+  geom_hline(yintercept = 1) +
+  labs(x = "Estimated Grain Yield Response ( Mg ha"^-1~")" , y = "Response Index" , color = "Index") +
+  theme(axis.title = element_text(size = 26),
+        axis.text = element_text(size = 26),
+        legend.text = element_text(size = 24),
+        legend.title = element_text(size = 24)) +
+  scale_color_manual( name = "Response Index" , 
+                              labels = c("GreenSeeker NDVI" , "sUAS NDVI" , "sUAS NDRE") , 
+                              values = c( "firebrick3" , "dodgerblue3" , "forestgreen"))
+
+Fig4.2
+
+
+ggsave("FIGURES/NOT_IN_PUBLICATION/Paper3_Fig_4.2.tiff" , Fig4.2 , compression = "lzw" , width = 15 , height = 12, type = "cairo" , dpi = 500)
+
+
+```
+
+```{r}
+
+index <- c("GreenSeeker NDVI" , "sUAS NDVI" , "sUAS NDRE")
+yield_response <- c(0.277 , 0.375 , 0.245)
+central_ri <- c(1.070 , 1.026 , 1.048)
+lower_limit <- c(1.001 , 1.001 , 1.001)
+upper_limit <- c(1.150 , 1.052 , 1.101)
+
+critical_point_data <- data.frame(index , yield_response , central_ri , lower_limit , upper_limit)
+
+critical_point_data$index <- factor(critical_point_data$index , levels = c("GreenSeeker NDVI" , "sUAS NDVI" , "sUAS NDRE"))
+
+Fig4.3 <- ggplot(data = critical_point_data , aes( x = central_ri , y = yield_response)) +
+  geom_point(data = critical_point_data , aes(x = central_ri , y = yield_response , color = index)) +
+  geom_errorbar(data = critical_point_data , aes( x = central_ri , y = yield_response , xmin = lower_limit , xmax = upper_limit , color = index) , size = .7 , width = .01) +
+  theme_classic() +
+  coord_cartesian(xlim = c(1 , 1.28) , ylim = c(0.1 , .5)) +
+  scale_x_continuous(breaks = seq(1 , 1.28 , by = 0.05)) +
+  scale_y_continuous(breaks = seq(0.1 , .5 , by = .1)) +
+  labs( x = "Response Index" , y = "Estimated Grain Yield Response to Top-Dress N ( Mg ha"^-1~")" , color = "Index") +
+  theme(axis.title = element_text(size = 26),
+        axis.text = element_text(size = 26),
+        legend.text = element_text(size = 24),
+        legend.title = element_text(size = 24)
+        ) +
+  geom_vline(xintercept = 1) 
+
+Fig4.3
+
+ggsave("FIGURES/NOT_IN_PUBLICATION/Paper3_Fig_4.3.tiff" , Fig4.3 , compression = "lzw" , width = 15 , height = 12, type = "cairo" , dpi = 500)
+
+```
+
+##FIGURE 5
+
+```{r}
+
+
+
+Fig5 <- ggplot(data = paper3_data_no_2018 , aes(x = RI) ) +
+  geom_density(data = paper3_data_no_2018 , aes(x = RI  , color = Platform)) +
+  geom_rug(data = paper3_data_no_2018 , aes(x = RI  , color = Platform)) +
+  theme_classic() +
+  theme(axis.title = element_text(size = 26),
+        axis.text = element_text(size = 26),
+        legend.text = element_text(size = 24),
+        legend.title = element_text(size = 24)
+        ) +
+  labs(x = "Response Index" , y = "Density")
+
+Fig5
+
+```
+
+#W/O TOPDRESS
+
+#plots
+```{r}
+
+paper3_data_no_topdress <- paper3_data %>% 
+  filter(TopDress_kgha_f == 0)
+
+ggplot(data = subset(paper3_data_no_topdress , Platform == 'GreenSeeker_NDVI') , aes( x = RI , y = GrainYield_Mgha)) +
+  geom_point( data = subset(paper3_data_no_topdress , Platform == 'GreenSeeker_NDVI') , aes( x = RI , y = GrainYield_Mgha , color = Platform , shape = site_year)) +
+  scale_shape_manual(values = c(1 : 20)) +
+  coord_cartesian(xlim = c(1 , 5))
+
+ggplot(data = subset(paper3_data_no_topdress , Platform == 'sUAS_NDVI') , aes( x = RI , y = GrainYield_Mgha)) +
+  geom_point( data = subset(paper3_data_no_topdress , Platform == 'sUAS_NDVI') , aes( x = RI , y = GrainYield_Mgha , color = Platform , shape = site_year)) +
+  scale_shape_manual(values = c(1 : 20)) +
+  coord_cartesian(xlim = c(1 , 5))
+
+ggplot(data = subset(paper3_data_no_topdress , Platform == 'sUAS_NDRE') , aes( x = RI , y = GrainYield_Mgha)) +
+  geom_point( data = subset(paper3_data_no_topdress , Platform == 'sUAS_NDRE') , aes( x = RI , y = GrainYield_Mgha , color = Platform , shape = site_year)) +
+  scale_shape_manual(values = c(1 : 20)) +
+  coord_cartesian(xlim = c(1 , 5))
+
+ggplot(data = subset(paper3_data_no_topdress , Platform == 'GreenSeeker_NDVI') , aes( x = SI , y = GrainYield_Mgha)) +
+  geom_point( data = subset(paper3_data_no_topdress , Platform == 'GreenSeeker_NDVI') , aes( x = SI , y = GrainYield_Mgha , color = Platform , shape = site_year)) +
+  scale_shape_manual(values = c(1 : 20)) +
+  coord_cartesian(xlim = c(0,1))
+
+ggplot(data = subset(paper3_data_no_topdress , Platform == 'sUAS_NDVI') , aes( x = SI , y = GrainYield_Mgha)) +
+  geom_point( data = subset(paper3_data_no_topdress , Platform == 'sUAS_NDVI') , aes( x = SI , y = GrainYield_Mgha , color = Platform , shape = site_year)) +
+  scale_shape_manual(values = c(1 : 20)) +
+  coord_cartesian(xlim = c(0,1))
+
+ggplot(data = subset(paper3_data_no_topdress , Platform == 'sUAS_NDRE') , aes( x = SI , y = GrainYield_Mgha)) +
+  geom_point( data = subset(paper3_data_no_topdress , Platform == 'sUAS_NDRE') , aes( x = SI , y = GrainYield_Mgha , color = Platform , shape = site_year)) +
+  scale_shape_manual(values = c(1 : 20)) +
+  coord_cartesian(xlim = c(0,1))
+
+```
+
+#calculating rel yield
+```{r}
+
+nic17 <- subset(paper3_data_no_topdress, site_year == "Nicolaus-17")
+nic17 <- apply(nic17,2,max)
+nic17max_yield <- as.numeric(nic17[17])
+
+wil17 <- subset(paper3_data_no_topdress, site_year == "Williams-17")
+wil17 <- apply(wil17,2,max)
+wil17max_yield <- as.numeric(wil17[17])
+
+arb18 <- subset(paper3_data_no_topdress, site_year == "Arbuckle-18")
+arb18 <- apply(arb18,2,max)
+arb18max_yield <- as.numeric(arb18[17])
+
+nic18 <- subset(paper3_data_no_topdress, site_year == "Nicolaus-18")
+nic18 <- apply(nic18,2,max)
+nic18max_yield <- as.numeric(nic18[17])
+
+mry18 <- subset(paper3_data_no_topdress, site_year == "Marysville-18")
+mry18 <- apply(mry18,2,max)
+mry18max_yield <- as.numeric(mry18[17])
+
+biggs18 <- subset(paper3_data_no_topdress, site_year == "Biggs-18")
+biggs18 <- apply(biggs18,2,max)
+biggs18max_yield <- as.numeric(biggs18[17])
+
+arb19 <- subset(paper3_data_no_topdress, site_year == "Arbuckle-19")
+arb19 <- apply(arb19,2,max)
+arb19max_yield <- as.numeric(arb19[17])
+
+dav19 <- subset(paper3_data_no_topdress, site_year == "Davis-19")
+dav19 <- apply(dav19,2,max)
+dav19max_yield <- as.numeric(dav19[17])
+
+mry19 <- subset(paper3_data_no_topdress, site_year == "Marysville-19")
+mry19 <- apply(mry19,2,max)
+mry19max_yield <- as.numeric(mry19[17])
+
+res19 <- subset(paper3_data_no_topdress, site_year == "RES-19")
+res19 <- apply(res19,2,max)
+res19max_yield <- as.numeric(res19[17])
+
+
+paper3_data_no_topdress <- paper3_data_no_topdress %>% 
+  mutate(relative_grain_yield = case_when(
+                          site_year == "Nicolaus-17" ~ GrainYield_Mgha / nic17max_yield ,
+                          site_year == "Williams-17" ~ GrainYield_Mgha / wil17max_yield ,
+                          site_year == "Arbuckle-18" ~ GrainYield_Mgha / arb18max_yield ,
+                          site_year == "Nicolaus-18" ~ GrainYield_Mgha / nic18max_yield ,
+                          site_year == "Marysville-18" ~ GrainYield_Mgha / mry18max_yield ,
+                          site_year == "Biggs-18" ~ GrainYield_Mgha / biggs18max_yield,
+                          site_year == "Arbuckle-19" ~ GrainYield_Mgha / arb19max_yield ,
+                          site_year == "Davis-19" ~ GrainYield_Mgha / dav19max_yield ,
+                          site_year == "Marysville-19" ~ GrainYield_Mgha / mry19max_yield ,
+                          site_year == "RES-19" ~ GrainYield_Mgha / res19max_yield))
+
+
+```
+
+#plots
+```{r}
+
+
+ggplot(data = subset(paper3_data_no_topdress , Platform == 'GreenSeeker_NDVI') , aes( x = RI , y = relative_grain_yield)) +
+  geom_point( data = subset(paper3_data_no_topdress , Platform == 'GreenSeeker_NDVI') , aes( x = RI , y = relative_grain_yield , color = Platform , shape = site_year)) +
+  scale_shape_manual(values = c(1 : 20))
+
+ggplot(data = subset(paper3_data_no_topdress , Platform == 'sUAS_NDVI') , aes( x = RI , y = relative_grain_yield)) +
+  geom_point( data = subset(paper3_data_no_topdress , Platform == 'sUAS_NDVI') , aes( x = RI , y = relative_grain_yield , color = Platform , shape = site_year)) +
+  scale_shape_manual(values = c(1 : 20))
+
+ggplot(data = subset(paper3_data_no_topdress , Platform == 'sUAS_NDRE') , aes( x = RI , y = relative_grain_yield)) +
+  geom_point( data = subset(paper3_data_no_topdress , Platform == 'sUAS_NDRE') , aes( x = RI , y = relative_grain_yield , color = Platform , shape = site_year)) +
+  scale_shape_manual(values = c(1 : 20))
+
+ggplot(data = subset(paper3_data_no_topdress , Platform == 'GreenSeeker_NDVI') , aes( x = SI , y = relative_grain_yield)) +
+  geom_point( data = subset(paper3_data_no_topdress , Platform == 'GreenSeeker_NDVI') , aes( x = SI , y = relative_grain_yield , color = Platform , shape = site_year)) +
+  scale_shape_manual(values = c(1 : 20))
+
+ggplot(data = subset(paper3_data_no_topdress , Platform == 'sUAS_NDVI') , aes( x = SI , y = relative_grain_yield)) +
+  geom_point( data = subset(paper3_data_no_topdress , Platform == 'sUAS_NDVI') , aes( x = SI , y = relative_grain_yield , color = Platform , shape = site_year)) +
+  scale_shape_manual(values = c(1 : 20))
+
+ggplot(data = subset(paper3_data_no_topdress , Platform == 'sUAS_NDRE') , aes( x = SI , y = relative_grain_yield)) +
+  geom_point( data = subset(paper3_data_no_topdress , Platform == 'sUAS_NDRE') , aes( x = SI , y = relative_grain_yield , color = Platform , shape = site_year)) +
+  scale_shape_manual(values = c(1 : 20))
+
+```
+
+#making lm() w/ RI
+
+#gs ndvi
+
+```{r}
+
+paper3_data_no_topdress_gsndvi <- paper3_data_no_topdress %>% 
+  filter(Platform == "GreenSeeker_NDVI")
+
+gsndvi_yield_lm <- lm(GrainYield_Mgha ~ RI , data = paper3_data_no_topdress_gsndvi)
+
+summary(gsndvi_yield_lm)
+
+plot(gsndvi_yield_lm)
+
+ggplotRegression <- function (fit) {
+
+require(ggplot2)
+
+ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "red") +
+  labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 2),
+                     "Intercept =",signif(fit$coef[[1]], 4 ),
+                     " Slope =",signif(fit$coef[[2]], 4),
+                     " P =",signif(summary(fit)$coef[2,4], 3))) +
+  coord_cartesian(ylim = c(0 , 14) , xlim = c(1,4)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 1)
+}
+
+ggplotRegression(gsndvi_yield_lm)
+
+mylist <- list(RI=seq(1 , 3.7 , by = .001))
+
+gsndvi_emmeans <- as.data.frame(summary(emmeans(gsndvi_yield_lm , ~ RI , at = mylist )))
+
+
+```
+
+#sUAS ndvi
+```{r}
+
+paper3_data_no_topdress_sUASndvi <- paper3_data_no_topdress %>% 
+  filter(Platform == "sUAS_NDVI")
+
+sUASndvi_yield_lm <- lm(GrainYield_Mgha ~ RI , data = paper3_data_no_topdress_sUASndvi)
+
+summary(sUASndvi_yield_lm)
+
+plot(sUASndvi_yield_lm)
+
+ggplotRegression <- function (fit) {
+
+require(ggplot2)
+
+ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "red") +
+  labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 2),
+                     "Intercept =",signif(fit$coef[[1]], 4),
+                     " Slope =",signif(fit$coef[[2]], 4),
+                     " P =",signif(summary(fit)$coef[2,4], 3))) +
+  coord_cartesian(ylim = c(0 , 14) , xlim = c(1,4)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 1)
+}
+
+ggplotRegression(sUASndvi_yield_lm)
+
+mylist <- list(RI=seq(1 , 1.6 , by = .001))
+
+sUASndvi_emmeans <- as.data.frame(summary(emmeans(sUASndvi_yield_lm , ~ RI , at = mylist )))
+
+```
+
+#sUAS ndre
+
+```{r}
+
+paper3_data_no_topdress_sUASndre <- paper3_data_no_topdress %>% 
+  filter(Platform == "sUAS_NDRE")
+
+sUASndre_yield_lm <- lm(GrainYield_Mgha ~ RI , data = paper3_data_no_topdress_sUASndre)
+
+summary(sUASndre_yield_lm)
+
+plot(sUASndre_yield_lm)
+
+ggplotRegression <- function (fit) {
+
+require(ggplot2)
+
+ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "red") +
+  labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 2),
+                     "Intercept =",signif(fit$coef[[1]], 4),
+                     " Slope =",signif(fit$coef[[2]], 4),
+                     " P =",signif(summary(fit)$coef[2,4], 3))) +
+  coord_cartesian(ylim = c(0 , 14) , xlim = c(1,4)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 1)
+}
+
+ggplotRegression(sUASndre_yield_lm)
+
+mylist <- list(RI=seq(1 , 2.1 , by = .001))
+
+sUASndre_emmeans <- as.data.frame(summary(emmeans(sUASndre_yield_lm , ~ RI , at = mylist )))
+
+```
+
+#making lm() w/ Index
+
+#gs ndvi
+```{r}
+
+paper3_data_no_topdress_gsndvi <- paper3_data_no_topdress %>% 
+  filter(Platform == "GreenSeeker_NDVI")
+
+gsndvi_yield_lm <- lm(GrainYield_Mgha ~ Index , data = paper3_data_no_topdress_gsndvi)
+
+summary(gsndvi_yield_lm)
+
+plot(gsndvi_yield_lm)
+
+ggplotRegression <- function (fit) {
+
+require(ggplot2)
+
+ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "red") +
+  labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 2),
+                     "Intercept =",signif(fit$coef[[1]],4 ),
+                     " Slope =",signif(fit$coef[[2]], 4),
+                     " P =",signif(summary(fit)$coef[2,4], 3))) +
+  coord_cartesian(ylim = c(0 , 14) , xlim = c(0,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+}
+
+ggplotRegression(gsndvi_yield_lm)
+
+
+```
+
+#sUAS ndvi
+```{r}
+
+paper3_data_no_topdress_sUASndvi <- paper3_data_no_topdress %>% 
+  filter(Platform == "sUAS_NDVI")
+
+sUASndvi_yield_lm <- lm(GrainYield_Mgha ~ Index , data = paper3_data_no_topdress_sUASndvi)
+
+summary(sUASndvi_yield_lm)
+
+plot(sUASndvi_yield_lm)
+
+ggplotRegression <- function (fit) {
+
+require(ggplot2)
+
+ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "red") +
+  labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 2),
+                     "Intercept =",signif(fit$coef[[1]], 4),
+                     " Slope =",signif(fit$coef[[2]], 4),
+                     " P =",signif(summary(fit)$coef[2,4], 3))) +
+  coord_cartesian(ylim = c(0 , 14) , xlim = c(0,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+}
+
+ggplotRegression(sUASndvi_yield_lm)
+
+```
+
+#sUAS ndre
+```{r}
+
+paper3_data_no_topdress_sUASndre <- paper3_data_no_topdress %>% 
+  filter(Platform == "sUAS_NDRE")
+
+sUASndre_yield_lm <- lm(GrainYield_Mgha ~ Index , data = paper3_data_no_topdress_sUASndre)
+
+summary(sUASndre_yield_lm)
+
+plot(sUASndre_yield_lm)
+
+ggplotRegression <- function (fit) {
+
+require(ggplot2)
+
+ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "red") +
+  labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 2),
+                     "Intercept =",signif(fit$coef[[1]], 4 ),
+                     " Slope =",signif(fit$coef[[2]], 4),
+                     " P =",signif(summary(fit)$coef[2,4], 3))) +
+  coord_cartesian(ylim = c(0 , 14) , xlim = c(0,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+}
+
+ggplotRegression(sUASndre_yield_lm)
+
+
+```
+
+#making lm() w/ SI
+
+#gs ndvi
+```{r}
+
+paper3_data_no_topdress_gsndvi <- paper3_data_no_topdress %>% 
+  filter(Platform == "GreenSeeker_NDVI")
+
+gsndvi_yield_lm <- lm(GrainYield_Mgha ~ SI , data = paper3_data_no_topdress_gsndvi)
+
+summary(gsndvi_yield_lm)
+
+plot(gsndvi_yield_lm)
+
+ggplotRegression <- function (fit) {
+
+require(ggplot2)
+
+ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "red") +
+  labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 2),
+                     "Intercept =",signif(fit$coef[[1]],4 ),
+                     " Slope =",signif(fit$coef[[2]], 4),
+                     " P =",signif(summary(fit)$coef[2,4], 3))) +
+  coord_cartesian(ylim = c(0 , 14) , xlim = c(0,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+}
+
+ggplotRegression(gsndvi_yield_lm)
+
+
+```
+
+#sUAS ndvi
+```{r}
+
+paper3_data_no_topdress_sUASndvi <- paper3_data_no_topdress %>% 
+  filter(Platform == "sUAS_NDVI")
+
+sUASndvi_yield_lm <- lm(GrainYield_Mgha ~ SI , data = paper3_data_no_topdress_sUASndvi)
+
+summary(sUASndvi_yield_lm)
+
+plot(sUASndvi_yield_lm)
+
+ggplotRegression <- function (fit) {
+
+require(ggplot2)
+
+ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "red") +
+  labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 2),
+                     "Intercept =",signif(fit$coef[[1]], 4),
+                     " Slope =",signif(fit$coef[[2]], 4),
+                     " P =",signif(summary(fit)$coef[2,4], 3))) +
+  coord_cartesian(ylim = c(0 , 14) , xlim = c(0,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+}
+
+ggplotRegression(sUASndvi_yield_lm)
+
+```
+
+#sUAS ndre
+```{r}
+
+paper3_data_no_topdress_sUASndre <- paper3_data_no_topdress %>% 
+  filter(Platform == "sUAS_NDRE")
+
+sUASndre_yield_lm <- lm(GrainYield_Mgha ~ SI , data = paper3_data_no_topdress_sUASndre)
+
+summary(sUASndre_yield_lm)
+
+plot(sUASndre_yield_lm)
+
+ggplotRegression <- function (fit) {
+
+require(ggplot2)
+
+ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "red") +
+  labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 2),
+                     "Intercept =",signif(fit$coef[[1]], 4 ),
+                     " Slope =",signif(fit$coef[[2]], 4),
+                     " P =",signif(summary(fit)$coef[2,4], 3))) +
+  coord_cartesian(ylim = c(0 , 14) , xlim = c(0,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+}
+
+ggplotRegression(sUASndre_yield_lm)
+
+```
+
+#******************
+
+#LME() w/ RI
+
+#gs ndvi RI
+
+#model
+
+```{r}
+
+gsndvi_yield_mixlm <- lme(fixed = GrainYield_Mgha ~ RI ,
+                          random = ~I(RI) | site_year,
+                          control = ctrl,
+                          data = paper3_data_no_topdress_gsndvi)
+
+summary(gsndvi_yield_mixlm)
+
+Anova(gsndvi_yield_mixlm , type = 2)
+Anova(gsndvi_yield_mixlm , type = 3)
+
+r.squaredGLMM(gsndvi_yield_mixlm)
+
+```
+
+#diagnostics
+```{r}
+
+plot (gsndvi_yield_mixlm)
+
+plot(resid(gsndvi_yield_mixlm, type = "normalized") ~fitted(gsndvi_yield_mixlm))
+
+gsndvi_yield_mixlm_y <- resid(gsndvi_yield_mixlm, type = "normalized")
+gsndvi_yield_mixlm_x <- fitted(gsndvi_yield_mixlm)
+
+gsndvi_yield_mixlmresid_data <- data.frame(gsndvi_yield_mixlm_x , gsndvi_yield_mixlm_y)
+
+ggplot( data = gsndvi_yield_mixlmresid_data , aes( x = gsndvi_yield_mixlm_x , y = gsndvi_yield_mixlm_y)) +
+  geom_point(mapping = aes(gsndvi_yield_mixlm_x , gsndvi_yield_mixlm_y) , data = gsndvi_yield_mixlmresid_data)
+
+hist(resid(gsndvi_yield_mixlm))
+
+
+plot(gsndvi_yield_mixlm, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(gsndvi_yield_mixlm, abline = c(0,1) )
+
+
+qqnorm(resid(gsndvi_yield_mixlm))
+qqline(resid(gsndvi_yield_mixlm))
+
+
+qqnorm(gsndvi_yield_mixlm , ~resid(.) | site_year)
+
+plot(ranef(gsndvi_yield_mixlm))
+
+pairs(gsndvi_yield_mixlm , id = 0.1) 
+
+qqnorm(gsndvi_yield_mixlm , ~ranef(.))
+
+plot( gsndvi_yield_mixlm, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#outlier removal
+
+```{r}
+
+paper3_data_no_topdress_gsndvi_OR <- paper3_data_no_topdress_gsndvi[-(c(which(abs(residuals(gsndvi_yield_mixlm, type = "normalized"))>qnorm(0.99)))),]
+
+```
+
+#rerun model sans outliers
+
+```{r}
+
+gsndvi_yield_mixlm_OR <- lme(GrainYield_Mgha ~ RI  ,
+             control = ctrl ,
+             random = ~ I(RI) | site_year  , 
+             data = paper3_data_no_topdress_gsndvi_OR)
+
+summary(gsndvi_yield_mixlm_OR)
+
+summary(gsndvi_yield_mixlm_OR)$tTable
+
+Anova(gsndvi_yield_mixlm_OR , type = 2)
+Anova(gsndvi_yield_mixlm_OR , type = 3)
+
+gsndvi_r_sq <- r.squaredGLMM(gsndvi_yield_mixlm_OR)
+
+gsndvi_r_sq_fixed <- round(gsndvi_r_sq[1] , digits = 2)
+gsndvi_r_sq_fixed
+
+gsndvi_r_sq_total <- round(gsndvi_r_sq[2] , digits = 2)
+gsndvi_r_sq_total
+
+gsndvi_r_sq_random <- gsndvi_r_sq_total - gsndvi_r_sq_fixed
+gsndvi_r_sq_random
+
+
+```
+
+# model diagnostics
+
+```{r}
+
+plot (gsndvi_yield_mixlm_OR)
+
+plot(resid(gsndvi_yield_mixlm_OR, type = "normalized") ~fitted(gsndvi_yield_mixlm_OR))
+
+gsndvi_yield_mixlm_OR_y <- resid(gsndvi_yield_mixlm_OR, type = "normalized")
+gsndvi_yield_mixlm_OR_x <- fitted(gsndvi_yield_mixlm_OR)
+
+gsndvi_yield_mixlm_ORresid_data <- data.frame(gsndvi_yield_mixlm_OR_x , gsndvi_yield_mixlm_OR_y)
+
+ggplot( data = gsndvi_yield_mixlm_ORresid_data , aes( x = gsndvi_yield_mixlm_OR_x , y = gsndvi_yield_mixlm_OR_y)) +
+  geom_point(mapping = aes(gsndvi_yield_mixlm_OR_x , gsndvi_yield_mixlm_OR_y) , data = gsndvi_yield_mixlm_ORresid_data)
+
+hist(resid(gsndvi_yield_mixlm_OR))
+
+
+plot(gsndvi_yield_mixlm_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(gsndvi_yield_mixlm_OR, abline = c(0,1) )
+
+
+qqnorm(resid(gsndvi_yield_mixlm_OR))
+qqline(resid(gsndvi_yield_mixlm_OR))
+
+
+qqnorm(gsndvi_yield_mixlm_OR , ~resid(.) | site_year)
+
+plot(ranef(gsndvi_yield_mixlm_OR))
+
+pairs(gsndvi_yield_mixlm_OR , id = 0.1)
+
+qqnorm(gsndvi_yield_mixlm_OR , ~ranef(.))
+
+plot( gsndvi_yield_mixlm_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#emmeans
+
+```{r}
+
+mylist <- list(RI=seq(1 , 4.933 , by = .001))
+
+gsndvi_emmeans <- as.data.frame(summary(emmeans(gsndvi_yield_mixlm , ~ RI , at = mylist )))
+
+```
+
+#plot
+```{r}
+
+plot1 <- ggplot( data = paper3_data_no_topdress_gsndvi , aes( x = RI , y = GrainYield_Mgha)) +
+  geom_point( data = paper3_data_no_topdress_gsndvi , aes( x = RI , y = GrainYield_Mgha , shape = site_year) , size = 3) +
+  geom_line( data = gsndvi_emmeans , aes(x = RI , y = emmean) , color = "black" , size = 1.5) +
+  theme_classic() +
+  labs( x = NULL , y = NULL , color = "Index") +
+  scale_x_continuous(breaks = seq(1 , 5 , by = .5)) +
+  scale_y_continuous(breaks = seq(0 , 14 , by = 2)) +
+  coord_cartesian(ylim = c(0,14) , xlim = c(1,5)) +
+  geom_vline(xintercept = 1 , size = 0.5) +
+  theme(axis.text = element_text(size = 28),
+        axis.title = element_text(size = 28),
+        legend.text = element_text(size = 24),
+        legend.title = element_text(size = 24),
+        legend.position = "none") +
+  annotate("text", x= 1.5, y=0, label="R² = 0.62, slope = -4.7", size=7) +
+  annotate("text", x=1.5, y = 1, label="GS NDVI", size=7 , color = "black") +
+  scale_shape_manual(values = c(1:20))
+
+plot1
+
+```
+
+#sUAS ndvi RI
+
+#model
+
+```{r}
+
+sUASndvi_yield_mixlm <- lme(fixed = GrainYield_Mgha ~ RI ,
+                          random = ~I(RI) | site_year,
+                          control = ctrl,
+                          data = paper3_data_no_topdress_sUASndvi)
+
+summary(sUASndvi_yield_mixlm)
+
+Anova(sUASndvi_yield_mixlm , type = 2)
+Anova(sUASndvi_yield_mixlm , type = 3)
+
+r.squaredGLMM(sUASndvi_yield_mixlm)
+
+```
+
+#diagnostics
+```{r}
+
+plot (sUASndvi_yield_mixlm)
+
+plot(resid(sUASndvi_yield_mixlm, type = "normalized") ~fitted(sUASndvi_yield_mixlm))
+
+sUASndvi_yield_mixlm_y <- resid(sUASndvi_yield_mixlm, type = "normalized")
+sUASndvi_yield_mixlm_x <- fitted(sUASndvi_yield_mixlm)
+
+sUASndvi_yield_mixlmresid_data <- data.frame(sUASndvi_yield_mixlm_x , sUASndvi_yield_mixlm_y)
+
+ggplot( data = sUASndvi_yield_mixlmresid_data , aes( x = sUASndvi_yield_mixlm_x , y = sUASndvi_yield_mixlm_y)) +
+  geom_point(mapping = aes(sUASndvi_yield_mixlm_x , sUASndvi_yield_mixlm_y) , data = sUASndvi_yield_mixlmresid_data)
+
+hist(resid(sUASndvi_yield_mixlm))
+
+
+plot(sUASndvi_yield_mixlm, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndvi_yield_mixlm, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndvi_yield_mixlm))
+qqline(resid(sUASndvi_yield_mixlm))
+
+
+qqnorm(sUASndvi_yield_mixlm , ~resid(.) | site_year)
+
+plot(ranef(sUASndvi_yield_mixlm))
+
+pairs(sUASndvi_yield_mixlm , id = 0.1) 
+
+qqnorm(sUASndvi_yield_mixlm , ~ranef(.))
+
+plot( sUASndvi_yield_mixlm, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#outlier removal
+
+```{r}
+
+paper3_data_no_topdress_sUASndvi_OR <- paper3_data_no_topdress_sUASndvi[-(c(which(abs(residuals(sUASndvi_yield_mixlm, type = "normalized"))>qnorm(0.99)))),]
+
+```
+
+#rerun model sans outliers
+
+```{r}
+
+sUASndvi_yield_mixlm_OR <- lme(GrainYield_Mgha ~ RI  ,
+             control = ctrl ,
+             random = ~ I(RI) | site_year  , 
+             data = paper3_data_no_topdress_sUASndvi_OR)
+
+summary(sUASndvi_yield_mixlm_OR)
+
+summary(sUASndvi_yield_mixlm_OR)$tTable
+
+Anova(sUASndvi_yield_mixlm_OR , type = 2)
+Anova(sUASndvi_yield_mixlm_OR , type = 3)
+
+sUASndvi_r_sq <- r.squaredGLMM(sUASndvi_yield_mixlm_OR)
+
+sUASndvi_r_sq_fixed <- round(sUASndvi_r_sq[1] , digits = 2)
+sUASndvi_r_sq_fixed
+
+sUASndvi_r_sq_total <- round(sUASndvi_r_sq[2] , digits = 2)
+sUASndvi_r_sq_total
+
+sUASndvi_r_sq_random <- sUASndvi_r_sq_total - sUASndvi_r_sq_fixed
+sUASndvi_r_sq_random
+
+
+```
+
+# model diagnostics
+
+```{r}
+
+plot (sUASndvi_yield_mixlm_OR)
+
+plot(resid(sUASndvi_yield_mixlm_OR, type = "normalized") ~fitted(sUASndvi_yield_mixlm_OR))
+
+sUASndvi_yield_mixlm_OR_y <- resid(sUASndvi_yield_mixlm_OR, type = "normalized")
+sUASndvi_yield_mixlm_OR_x <- fitted(sUASndvi_yield_mixlm_OR)
+
+sUASndvi_yield_mixlm_ORresid_data <- data.frame(sUASndvi_yield_mixlm_OR_x , sUASndvi_yield_mixlm_OR_y)
+
+ggplot( data = sUASndvi_yield_mixlm_ORresid_data , aes( x = sUASndvi_yield_mixlm_OR_x , y = sUASndvi_yield_mixlm_OR_y)) +
+  geom_point(mapping = aes(sUASndvi_yield_mixlm_OR_x , sUASndvi_yield_mixlm_OR_y) , data = sUASndvi_yield_mixlm_ORresid_data)
+
+hist(resid(sUASndvi_yield_mixlm_OR))
+
+
+plot(sUASndvi_yield_mixlm_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndvi_yield_mixlm_OR, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndvi_yield_mixlm_OR))
+qqline(resid(sUASndvi_yield_mixlm_OR))
+
+
+qqnorm(sUASndvi_yield_mixlm_OR , ~resid(.) | site_year)
+
+plot(ranef(sUASndvi_yield_mixlm_OR))
+
+pairs(sUASndvi_yield_mixlm_OR , id = 0.1)
+
+qqnorm(sUASndvi_yield_mixlm_OR , ~ranef(.))
+
+plot( sUASndvi_yield_mixlm_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#emmeans
+
+```{r}
+
+mylist <- list(RI=seq(1 , 1.569 , by = .001))
+
+sUASndvi_emmeans <- as.data.frame(summary(emmeans(sUASndvi_yield_mixlm , ~ RI , at = mylist )))
+
+```
+
+#plot
+```{r}
+
+plot2 <- ggplot( data = paper3_data_no_topdress_sUASndvi , aes( x = RI , y = GrainYield_Mgha)) +
+  geom_point( data = paper3_data_no_topdress_sUASndvi , aes( x = RI , y = GrainYield_Mgha , shape = site_year) , size = 3) +
+  geom_line( data = sUASndvi_emmeans , aes(x = RI , y = emmean) , color = "black" , size = 1.5) +
+  theme_classic() +
+  labs( x = NULL , y = NULL , shape = "Site-Year") +
+  scale_x_continuous(breaks = seq(1 , 5 , by = .5)) +
+  scale_y_continuous(breaks = seq(0 , 14 , by = 2)) +
+  coord_cartesian(ylim = c(0,14) , xlim = c(1,5)) +
+  geom_vline(xintercept = 1 , size = 0.5) +
+  theme(axis.text = element_text(size = 28),
+        axis.title = element_text(size = 28),
+        legend.text = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        legend.position = c(.85 , .6)) +
+  annotate("text", x=3, y=0, label="R² = 0.59, slope = -20.4", size= 7 , color = "black") +
+  annotate("text", x=3, y=1, label="sUAS NDVI", size=7 , color = "black") +
+  scale_shape_manual(values = c(1:20))
+
+plot2
+
+```
+
+#sUAS ndre RI
+
+#model
+
+```{r}
+
+sUASndre_yield_mixlm <- lme(fixed = GrainYield_Mgha ~ RI ,
+                          random = ~I(RI) | site_year,
+                          control = ctrl,
+                          data = paper3_data_no_topdress_sUASndre)
+
+summary(sUASndre_yield_mixlm)
+
+Anova(sUASndre_yield_mixlm , type = 2)
+Anova(sUASndre_yield_mixlm , type = 3)
+
+r.squaredGLMM(sUASndre_yield_mixlm)
+
+```
+
+#diagnostics
+```{r}
+
+plot (sUASndre_yield_mixlm)
+
+plot(resid(sUASndre_yield_mixlm, type = "normalized") ~fitted(sUASndre_yield_mixlm))
+
+sUASndre_yield_mixlm_y <- resid(sUASndre_yield_mixlm, type = "normalized")
+sUASndre_yield_mixlm_x <- fitted(sUASndre_yield_mixlm)
+
+sUASndre_yield_mixlmresid_data <- data.frame(sUASndre_yield_mixlm_x , sUASndre_yield_mixlm_y)
+
+ggplot( data = sUASndre_yield_mixlmresid_data , aes( x = sUASndre_yield_mixlm_x , y = sUASndre_yield_mixlm_y)) +
+  geom_point(mapping = aes(sUASndre_yield_mixlm_x , sUASndre_yield_mixlm_y) , data = sUASndre_yield_mixlmresid_data)
+
+hist(resid(sUASndre_yield_mixlm))
+
+
+plot(sUASndre_yield_mixlm, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndre_yield_mixlm, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndre_yield_mixlm))
+qqline(resid(sUASndre_yield_mixlm))
+
+
+qqnorm(sUASndre_yield_mixlm , ~resid(.) | site_year)
+
+plot(ranef(sUASndre_yield_mixlm))
+
+pairs(sUASndre_yield_mixlm , id = 0.1) 
+
+qqnorm(sUASndre_yield_mixlm , ~ranef(.))
+
+plot( sUASndre_yield_mixlm, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+
+
+#outlier removal
+
+```{r}
+
+paper3_data_no_topdress_sUASndre_OR <- paper3_data_no_topdress_sUASndre[-(c(which(abs(residuals(sUASndre_yield_mixlm, type = "normalized"))>qnorm(0.99)))),]
+
+```
+
+#rerun model sans outliers
+
+```{r}
+
+sUASndre_yield_mixlm_OR <- 
+  lme(fixed = GrainYield_Mgha ~ RI  ,
+      control = ctrl ,
+      random = ~ I(RI) | site_year  , 
+      data = paper3_data_no_topdress_sUASndre_OR)
+
+summary(sUASndre_yield_mixlm_OR)
+
+summary(sUASndre_yield_mixlm_OR)$tTable
+
+Anova(sUASndre_yield_mixlm_OR , type = 2)
+Anova(sUASndre_yield_mixlm_OR , type = 3)
+
+sUASndre_r_sq <- r.squaredGLMM(sUASndre_yield_mixlm_OR)
+
+sUASndre_r_sq_fixed <- round(sUASndre_r_sq[1] , digits = 2)
+sUASndre_r_sq_fixed
+
+sUASndre_r_sq_total <- round(sUASndre_r_sq[2] , digits = 2)
+sUASndre_r_sq_total
+
+sUASndre_r_sq_random <- sUASndre_r_sq_total - sUASndre_r_sq_fixed
+sUASndre_r_sq_random
+
+
+```
+
+# model diagnostics
+
+```{r}
+
+plot (sUASndre_yield_mixlm_OR)
+
+plot(resid(sUASndre_yield_mixlm_OR, type = "normalized") ~fitted(sUASndre_yield_mixlm_OR))
+
+sUASndre_yield_mixlm_OR_y <- resid(sUASndre_yield_mixlm_OR, type = "normalized")
+sUASndre_yield_mixlm_OR_x <- fitted(sUASndre_yield_mixlm_OR)
+
+sUASndre_yield_mixlm_ORresid_data <- data.frame(sUASndre_yield_mixlm_OR_x , sUASndre_yield_mixlm_OR_y)
+
+ggplot( data = sUASndre_yield_mixlm_ORresid_data , aes( x = sUASndre_yield_mixlm_OR_x , y = sUASndre_yield_mixlm_OR_y)) +
+  geom_point(mapping = aes(sUASndre_yield_mixlm_OR_x , sUASndre_yield_mixlm_OR_y) , data = sUASndre_yield_mixlm_ORresid_data)
+
+hist(resid(sUASndre_yield_mixlm_OR))
+
+
+plot(sUASndre_yield_mixlm_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndre_yield_mixlm_OR, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndre_yield_mixlm_OR))
+qqline(resid(sUASndre_yield_mixlm_OR))
+
+
+qqnorm(sUASndre_yield_mixlm_OR , ~resid(.) | site_year)
+
+plot(ranef(sUASndre_yield_mixlm_OR))
+
+pairs(sUASndre_yield_mixlm_OR , id = 0.1)
+
+qqnorm(sUASndre_yield_mixlm_OR , ~ranef(.))
+
+plot( sUASndre_yield_mixlm_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#emmeans
+
+```{r}
+
+mylist <- list(RI=seq(1 , 2.067 , by = .001))
+
+sUASndre_emmeans <- as.data.frame(summary(emmeans(sUASndre_yield_mixlm , ~ RI , at = mylist )))
+
+
+```
+
+#plot
+```{r}
+
+plot3 <- ggplot( data = paper3_data_no_topdress_sUASndre , aes( x = RI , y = GrainYield_Mgha)) +
+  geom_point( data = paper3_data_no_topdress_sUASndre , aes( x = RI , y = GrainYield_Mgha , shape = site_year) , size = 3) +
+  geom_line( data = sUASndre_emmeans , aes(x = RI , y = emmean) , color = "black" , size = 1.5) +
+  theme_classic() +
+  labs( x = NULL , y = NULL , shape = "Site-Year") +
+  scale_x_continuous(breaks = seq(1 , 5 , by = .5)) +
+  scale_y_continuous(breaks = seq(0 , 14 , by = 2)) +
+  coord_cartesian(ylim = c(0,14) , xlim = c(1,5)) +
+  geom_vline(xintercept = 1 , size = 0.5) +
+  theme(axis.text = element_text(size = 28),
+        axis.title = element_text(size = 28),
+        legend.text = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        legend.position = "none") +
+  annotate("text", x=3, y=0, label="R² = 0.57, slope = -7.2", size=7 , color = "black") +
+  annotate("text", x=3, y=1, label="sUAS NDRE", size=7 , color = "black") +
+  scale_shape_manual(values = c(1:20))
+
+plot3
+```
+
+#plot
+```{r}
+
+plot4 <- ggplot( data = paper3_data_no_topdress_sUASndvi_OR , aes( x = RI , y = GrainYield_Mgha)) +
+  geom_point( data = paper3_data_no_topdress_sUASndvi_OR , aes( x = RI , y = GrainYield_Mgha) , size = 2) +
+  geom_point(data = paper3_data_no_topdress_gsndvi_OR , aes( x = RI , y = GrainYield_Mgha ) , size = 2) + geom_point(data = paper3_data_no_topdress_sUASndre_OR , aes( x = RI , y = GrainYield_Mgha) , size = 2) +
+  labs( x = "Response Index" , y = "Final Grain Yield ( Mg ha"^-1~")" , color = "Index") +
+  geom_line( data = sUASndvi_emmeans , aes(x = RI , y = emmean , color = "sUAS NDVI" , linetype = "sUAS NDVI")  , size = 2) +
+  geom_line( data = gsndvi_emmeans , aes(x = RI , y = emmean , color = "GS NDVI" , linetype = "GS NDVI")  , size = 2) +
+  geom_line(data = sUASndre_emmeans , aes(x = RI , y = emmean , color = "sUAS NDRE" , linetype = "sUAS NDRE")  , size = 2) +
+  theme_classic() +
+  scale_x_continuous(breaks = seq(1 , 4 , by = .5)) +
+  scale_y_continuous(breaks = seq(0 , 14 , by = 2)) +
+  coord_cartesian(ylim = c(0,14) , xlim = c(1,4)) +
+  geom_vline(xintercept = 1 , size = 0.5) +
+  theme(axis.text = element_text(size = 28),
+        axis.title = element_text(size = 28),
+        legend.text = element_text(size = 28),
+        legend.title = element_text(size = 28),
+        legend.position = c(0.75 , 0.75)) +
+  scale_color_manual("Index" , breaks = c("sUAS NDVI" , "GS NDVI" , "sUAS NDRE" ) , values = c( "blue" , "firebrick" , "forestgreen")) +
+  scale_linetype_manual("Index" , breaks = c("sUAS NDVI" , "GS NDVI" , "sUAS NDRE" ) , values = c( "solid" ,  "longdash" , "dotted")) +
+  annotate("text", x = 1.9 , y = 0, label = "R² = 0.62, slope = -20.5", size = 7 , color = "black") +
+  annotate("text", x = 3.5 , y = 0.7, label = "R² = 0.60, slope = -4.9", size = 7 , color = "black") +
+  annotate("text", x = 2.35 , y = 3.1, label = "R² = 0.59, slope = -7.3", size = 7 , color = "black") +
+  guides(size = "none" , color = guide_legend(keywidth = 5.5 , keyheight = 2.3 , unit = "cm" , override.aes = list(size = 2.55) , title.hjust = 0.5))
+
+plot4
+
+ggsave("FIGURES/Paper3_plot4.tiff" , plot4 , compression = "lzw" , width = 18 , height = 14, type = "cairo" , dpi = 750)
+```
+
+#grid
+```{r}
+
+plot5 <- grid.arrange(arrangeGrob(plot1,
+                                  plot3,
+                                  plot2,
+                                  left = textGrob("Final Grain Yield ( Mg ha"^-1~")" , rot = 90 , gp = gpar(fontsize = 32)),
+                                  bottom = textGrob("Response Index" , gp = gpar(fontsize = 32))))
+
+plot5
+
+ggsave("FIGURES/Paper3_plot5.tiff" , plot5 , compression = "lzw" , width = 16 , height = 16, type = "cairo" , dpi = 750)
+```
+
+#***************
+
+
+#LME() W/ REL YIELD
+
+#gs ndvi ri
+
+#model
+
+```{r}
+
+gsndvi_yield_mixlm <- lme(fixed = relative_grain_yield ~ RI ,
+                          random = ~I(RI) | site_year,
+                          data = paper3_data_no_topdress_gsndvi)
+
+summary(gsndvi_yield_mixlm)
+
+summary(gsndvi_yield_mixlm)$tTable
+
+Anova(gsndvi_yield_mixlm , type = 2)
+Anova(gsndvi_yield_mixlm , type = 3)
+
+r.squaredGLMM(gsndvi_yield_mixlm)
+
+```
+
+#diagnostics
+```{r}
+
+plot (gsndvi_yield_mixlm)
+
+plot(resid(gsndvi_yield_mixlm, type = "normalized") ~fitted(gsndvi_yield_mixlm))
+
+gsndvi_yield_mixlm_y <- resid(gsndvi_yield_mixlm, type = "normalized")
+gsndvi_yield_mixlm_x <- fitted(gsndvi_yield_mixlm)
+
+gsndvi_yield_mixlmresid_data <- data.frame(gsndvi_yield_mixlm_x , gsndvi_yield_mixlm_y)
+
+ggplot( data = gsndvi_yield_mixlmresid_data , aes( x = gsndvi_yield_mixlm_x , y = gsndvi_yield_mixlm_y)) +
+  geom_point(mapping = aes(gsndvi_yield_mixlm_x , gsndvi_yield_mixlm_y) , data = gsndvi_yield_mixlmresid_data)
+
+hist(resid(gsndvi_yield_mixlm))
+
+
+plot(gsndvi_yield_mixlm, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(gsndvi_yield_mixlm, abline = c(0,1) )
+
+
+qqnorm(resid(gsndvi_yield_mixlm))
+qqline(resid(gsndvi_yield_mixlm))
+
+
+qqnorm(gsndvi_yield_mixlm , ~resid(.) | site_year)
+
+plot(ranef(gsndvi_yield_mixlm))
+
+pairs(gsndvi_yield_mixlm , id = 0.1) 
+
+qqnorm(gsndvi_yield_mixlm , ~ranef(.))
+
+plot( gsndvi_yield_mixlm, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#outlier removal
+
+```{r}
+
+paper3_data_no_topdress_gsndvi_OR <- paper3_data_no_topdress_gsndvi[-(c(which(abs(residuals(gsndvi_yield_mixlm, type = "normalized"))>qnorm(0.99)))),]
+
+```
+
+#rerun model sans outliers
+
+```{r}
+
+gsndvi_yield_mixlm_OR <- lme(relative_grain_yield ~ SI   ,
+             random = ~ I(SI) | site_year  , 
+             data = paper3_data_no_topdress_gsndvi_OR)
+
+summary(gsndvi_yield_mixlm_OR)
+
+summary(gsndvi_yield_mixlm_OR)$tTable
+
+Anova(gsndvi_yield_mixlm_OR , type = 2)
+Anova(gsndvi_yield_mixlm_OR , type = 3)
+
+gsndvi_r_sq <- r.squaredGLMM(gsndvi_yield_mixlm_OR)
+
+gsndvi_r_sq_fixed <- round(gsndvi_r_sq[1] , digits = 2)
+gsndvi_r_sq_fixed
+
+gsndvi_r_sq_total <- round(gsndvi_r_sq[2] , digits = 2)
+gsndvi_r_sq_total
+
+gsndvi_r_sq_random <- gsndvi_r_sq_total - gsndvi_r_sq_fixed
+gsndvi_r_sq_random
+
+
+```
+
+# model diagnostics
+
+```{r}
+
+plot (gsndvi_yield_mixlm_OR)
+
+plot(resid(gsndvi_yield_mixlm_OR, type = "normalized") ~fitted(gsndvi_yield_mixlm_OR))
+
+gsndvi_yield_mixlm_OR_y <- resid(gsndvi_yield_mixlm_OR, type = "normalized")
+gsndvi_yield_mixlm_OR_x <- fitted(gsndvi_yield_mixlm_OR)
+
+gsndvi_yield_mixlm_ORresid_data <- data.frame(gsndvi_yield_mixlm_OR_x , gsndvi_yield_mixlm_OR_y)
+
+ggplot( data = gsndvi_yield_mixlm_ORresid_data , aes( x = gsndvi_yield_mixlm_OR_x , y = gsndvi_yield_mixlm_OR_y)) +
+  geom_point(mapping = aes(gsndvi_yield_mixlm_OR_x , gsndvi_yield_mixlm_OR_y) , data = gsndvi_yield_mixlm_ORresid_data)
+
+hist(resid(gsndvi_yield_mixlm_OR))
+
+
+plot(gsndvi_yield_mixlm_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(gsndvi_yield_mixlm_OR, abline = c(0,1) )
+
+
+qqnorm(resid(gsndvi_yield_mixlm_OR))
+qqline(resid(gsndvi_yield_mixlm_OR))
+
+
+qqnorm(gsndvi_yield_mixlm_OR , ~resid(.) | site_year)
+
+plot(ranef(gsndvi_yield_mixlm_OR))
+
+pairs(gsndvi_yield_mixlm_OR , id = 0.1)
+
+qqnorm(gsndvi_yield_mixlm_OR , ~ranef(.))
+
+plot( gsndvi_yield_mixlm_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#emmeans
+
+```{r}
+
+mylist <- list(RI=seq(1 , 4.933 , by = .001))
+
+gsndvi_emmeans <- as.data.frame(summary(emmeans(gsndvi_yield_mixlm , ~ RI , at = mylist )))
+
+```
+
+#plot
+
+```{r}
+
+plot_a <- ggplot( data = paper3_data_no_topdress_gsndvi , aes( x = RI , y = relative_grain_yield)) +
+  geom_point( data = paper3_data_no_topdress_gsndvi , aes( x = RI , y = relative_grain_yield , shape = site_year) , size = 3) +
+  geom_line( data = gsndvi_emmeans , aes(x = RI , y = emmean) , color = "black" , size = 1.5) +
+  theme_classic() +
+  labs( x = NULL , y = NULL , color = "Index") +
+  scale_x_continuous(breaks = seq(1 , 5 , by = .5)) +
+  scale_y_continuous(breaks = seq(0 , 1 , by = .2)) +
+  coord_cartesian(ylim = c(0,1) , xlim = c(1,5)) +
+  geom_vline(xintercept = 1 , size = 0.5) +
+  theme(axis.text = element_text(size = 28),
+        axis.title = element_text(size = 28),
+        legend.text = element_text(size = 24),
+        legend.title = element_text(size = 24),
+        legend.position = "none") +
+  annotate("text", x= 3, y = .5, label="R² = 0.71, slope = -0.38", size=7) +
+  annotate("text", x= 3, y = .6, label="GS NDVI", size=7 , color = "black") +
+  scale_shape_manual(values = c(1:20))
+
+plot_a
+
+```
+
+#sUAS ndvi RI
+
+#model
+
+```{r}
+
+sUASndvi_yield_mixlm <- lme(fixed = relative_grain_yield ~ RI  ,
+                          random = ~I(RI) | site_year,
+                          data = paper3_data_no_topdress_sUASndvi)
+
+summary(sUASndvi_yield_mixlm)
+summary(sUASndvi_yield_mixlm)$tTable
+
+Anova(sUASndvi_yield_mixlm , type = 2)
+Anova(sUASndvi_yield_mixlm , type = 3)
+
+r.squaredGLMM(sUASndvi_yield_mixlm)
+
+```
+
+#diagnostics
+```{r}
+
+plot (sUASndvi_yield_mixlm)
+
+plot(resid(sUASndvi_yield_mixlm, type = "normalized") ~fitted(sUASndvi_yield_mixlm))
+
+sUASndvi_yield_mixlm_y <- resid(sUASndvi_yield_mixlm, type = "normalized")
+sUASndvi_yield_mixlm_x <- fitted(sUASndvi_yield_mixlm)
+
+sUASndvi_yield_mixlmresid_data <- data.frame(sUASndvi_yield_mixlm_x , sUASndvi_yield_mixlm_y)
+
+ggplot( data = sUASndvi_yield_mixlmresid_data , aes( x = sUASndvi_yield_mixlm_x , y = sUASndvi_yield_mixlm_y)) +
+  geom_point(mapping = aes(sUASndvi_yield_mixlm_x , sUASndvi_yield_mixlm_y) , data = sUASndvi_yield_mixlmresid_data)
+
+hist(resid(sUASndvi_yield_mixlm))
+
+
+plot(sUASndvi_yield_mixlm, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndvi_yield_mixlm, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndvi_yield_mixlm))
+qqline(resid(sUASndvi_yield_mixlm))
+
+
+qqnorm(sUASndvi_yield_mixlm , ~resid(.) | site_year)
+
+plot(ranef(sUASndvi_yield_mixlm))
+
+pairs(sUASndvi_yield_mixlm , id = 0.1) 
+
+qqnorm(sUASndvi_yield_mixlm , ~ranef(.))
+
+plot( sUASndvi_yield_mixlm, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#outlier removal
+
+```{r}
+
+paper3_data_no_topdress_sUASndvi_OR <- paper3_data_no_topdress_sUASndvi[-(c(which(abs(residuals(sUASndvi_yield_mixlm, type = "normalized"))>qnorm(0.99)))),]
+
+```
+
+#rerun model sans outliers
+
+```{r}
+
+sUASndvi_yield_mixlm_OR <- lme(relative_grain_yield ~ SI ,
+             random = ~ I(SI) | site_year  , 
+             data = paper3_data_no_topdress_sUASndvi_OR)
+
+summary(sUASndvi_yield_mixlm_OR)
+
+summary(sUASndvi_yield_mixlm_OR)$tTable
+
+Anova(sUASndvi_yield_mixlm_OR , type = 2)
+Anova(sUASndvi_yield_mixlm_OR , type = 3)
+
+sUASndvi_r_sq <- r.squaredGLMM(sUASndvi_yield_mixlm_OR)
+
+sUASndvi_r_sq_fixed <- round(sUASndvi_r_sq[1] , digits = 2)
+sUASndvi_r_sq_fixed
+
+sUASndvi_r_sq_total <- round(sUASndvi_r_sq[2] , digits = 2)
+sUASndvi_r_sq_total
+
+sUASndvi_r_sq_random <- sUASndvi_r_sq_total - sUASndvi_r_sq_fixed
+sUASndvi_r_sq_random
+
+
+```
+
+# model diagnostics
+
+```{r}
+
+plot (sUASndvi_yield_mixlm_OR)
+
+plot(resid(sUASndvi_yield_mixlm_OR, type = "normalized") ~fitted(sUASndvi_yield_mixlm_OR))
+
+sUASndvi_yield_mixlm_OR_y <- resid(sUASndvi_yield_mixlm_OR, type = "normalized")
+sUASndvi_yield_mixlm_OR_x <- fitted(sUASndvi_yield_mixlm_OR)
+
+sUASndvi_yield_mixlm_ORresid_data <- data.frame(sUASndvi_yield_mixlm_OR_x , sUASndvi_yield_mixlm_OR_y)
+
+ggplot( data = sUASndvi_yield_mixlm_ORresid_data , aes( x = sUASndvi_yield_mixlm_OR_x , y = sUASndvi_yield_mixlm_OR_y)) +
+  geom_point(mapping = aes(sUASndvi_yield_mixlm_OR_x , sUASndvi_yield_mixlm_OR_y) , data = sUASndvi_yield_mixlm_ORresid_data)
+
+hist(resid(sUASndvi_yield_mixlm_OR))
+
+
+plot(sUASndvi_yield_mixlm_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndvi_yield_mixlm_OR, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndvi_yield_mixlm_OR))
+qqline(resid(sUASndvi_yield_mixlm_OR))
+
+
+qqnorm(sUASndvi_yield_mixlm_OR , ~resid(.) | site_year)
+
+plot(ranef(sUASndvi_yield_mixlm_OR))
+
+pairs(sUASndvi_yield_mixlm_OR , id = 0.1)
+
+qqnorm(sUASndvi_yield_mixlm_OR , ~ranef(.))
+
+plot( sUASndvi_yield_mixlm_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#emmeans
+
+```{r}
+
+mylist <- list(RI=seq(1 , 1.569 , by = .001))
+
+sUASndvi_emmeans <- as.data.frame(summary(emmeans(sUASndvi_yield_mixlm , ~ RI , at = mylist )))
+
+
+```
+
+#plot
+```{r}
+
+plot_b <- ggplot( data = paper3_data_no_topdress_sUASndvi , aes( x = RI , y = relative_grain_yield)) +
+  geom_point( data = paper3_data_no_topdress_sUASndvi , aes( x = RI , y = relative_grain_yield , shape = site_year) , size = 3) +
+  geom_line( data = sUASndvi_emmeans , aes(x = RI , y = emmean) , color = "black" , size = 1.5) +
+  theme_classic() +
+  labs( x = NULL , y = NULL , shape = "Site-Year") +
+  scale_x_continuous(breaks = seq(1 , 5 , by = .5)) +
+  scale_y_continuous(breaks = seq(0 , 1 , by = .2)) +
+  coord_cartesian(ylim = c(0,1) , xlim = c(1,5)) +
+  geom_vline(xintercept = 1 , size = 0.5) +
+  theme(axis.text = element_text(size = 28),
+        axis.title = element_text(size = 28),
+        legend.text = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        legend.position = c(.85 , .6)) +
+  annotate("text", x=3, y=.5, label="R² = 0.72, slope = -1.7", size= 7 , color = "black") +
+  annotate("text", x=3, y=.6, label="sUAS NDVI", size=7 , color = "black") +
+  scale_shape_manual(values = c(1:20))
+
+plot_b
+
+```
+
+
+#sUAS ndre RI
+
+#model
+
+```{r}
+
+sUASndre_yield_mixlm <- lme(fixed = relative_grain_yield ~ RI  ,
+                          random = ~I(RI) | site_year,
+                          data = paper3_data_no_topdress_sUASndre)
+
+summary(sUASndre_yield_mixlm)
+
+Anova(sUASndre_yield_mixlm , type = 2)
+Anova(sUASndre_yield_mixlm , type = 3)
+
+r.squaredGLMM(sUASndre_yield_mixlm)
+
+```
+
+#diagnostics
+```{r}
+
+plot (sUASndre_yield_mixlm)
+
+plot(resid(sUASndre_yield_mixlm, type = "normalized") ~fitted(sUASndre_yield_mixlm))
+
+sUASndre_yield_mixlm_y <- resid(sUASndre_yield_mixlm, type = "normalized")
+sUASndre_yield_mixlm_x <- fitted(sUASndre_yield_mixlm)
+
+sUASndre_yield_mixlmresid_data <- data.frame(sUASndre_yield_mixlm_x , sUASndre_yield_mixlm_y)
+
+ggplot( data = sUASndre_yield_mixlmresid_data , aes( x = sUASndre_yield_mixlm_x , y = sUASndre_yield_mixlm_y)) +
+  geom_point(mapping = aes(sUASndre_yield_mixlm_x , sUASndre_yield_mixlm_y) , data = sUASndre_yield_mixlmresid_data)
+
+hist(resid(sUASndre_yield_mixlm))
+
+
+plot(sUASndre_yield_mixlm, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndre_yield_mixlm, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndre_yield_mixlm))
+qqline(resid(sUASndre_yield_mixlm))
+
+
+qqnorm(sUASndre_yield_mixlm , ~resid(.) | site_year)
+
+plot(ranef(sUASndre_yield_mixlm))
+
+pairs(sUASndre_yield_mixlm , id = 0.1) 
+
+qqnorm(sUASndre_yield_mixlm , ~ranef(.))
+
+plot( sUASndre_yield_mixlm, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+
+
+#outlier removal
+
+```{r}
+
+paper3_data_no_topdress_sUASndre_OR <- paper3_data_no_topdress_sUASndre[-(c(which(abs(residuals(sUASndre_yield_mixlm, type = "normalized"))>qnorm(0.99)))),]
+
+```
+
+#rerun model sans outliers
+
+```{r}
+
+sUASndre_yield_mixlm_OR <- lme(relative_grain_yield ~ SI,
+             random = ~ I(SI) | site_year  , 
+             data = paper3_data_no_topdress_sUASndre_OR)
+
+summary(sUASndre_yield_mixlm_OR)
+
+summary(sUASndre_yield_mixlm_OR)$tTable
+
+Anova(sUASndre_yield_mixlm_OR , type = 2)
+Anova(sUASndre_yield_mixlm_OR , type = 3)
+
+sUASndre_r_sq <- r.squaredGLMM(sUASndre_yield_mixlm_OR)
+
+sUASndre_r_sq_fixed <- round(sUASndre_r_sq[1] , digits = 2)
+sUASndre_r_sq_fixed
+
+sUASndre_r_sq_total <- round(sUASndre_r_sq[2] , digits = 2)
+sUASndre_r_sq_total
+
+sUASndre_r_sq_random <- sUASndre_r_sq_total - sUASndre_r_sq_fixed
+sUASndre_r_sq_random
+
+
+```
+
+# model diagnostics
+
+```{r}
+
+plot (sUASndre_yield_mixlm_OR)
+
+plot(resid(sUASndre_yield_mixlm_OR, type = "normalized") ~fitted(sUASndre_yield_mixlm_OR))
+
+sUASndre_yield_mixlm_OR_y <- resid(sUASndre_yield_mixlm_OR, type = "normalized")
+sUASndre_yield_mixlm_OR_x <- fitted(sUASndre_yield_mixlm_OR)
+
+sUASndre_yield_mixlm_ORresid_data <- data.frame(sUASndre_yield_mixlm_OR_x , sUASndre_yield_mixlm_OR_y)
+
+ggplot( data = sUASndre_yield_mixlm_ORresid_data , aes( x = sUASndre_yield_mixlm_OR_x , y = sUASndre_yield_mixlm_OR_y)) +
+  geom_point(mapping = aes(sUASndre_yield_mixlm_OR_x , sUASndre_yield_mixlm_OR_y) , data = sUASndre_yield_mixlm_ORresid_data)
+
+hist(resid(sUASndre_yield_mixlm_OR))
+
+
+plot(sUASndre_yield_mixlm_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndre_yield_mixlm_OR, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndre_yield_mixlm_OR))
+qqline(resid(sUASndre_yield_mixlm_OR))
+
+
+qqnorm(sUASndre_yield_mixlm_OR , ~resid(.) | site_year)
+
+plot(ranef(sUASndre_yield_mixlm_OR))
+
+pairs(sUASndre_yield_mixlm_OR , id = 0.1)
+
+qqnorm(sUASndre_yield_mixlm_OR , ~ranef(.))
+
+plot( sUASndre_yield_mixlm_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#emmeans
+
+```{r}
+
+mylist <- list(RI=seq( 1 , 2.067 , by = .001))
+
+sUASndre_emmeans <- as.data.frame(summary(emmeans(sUASndre_yield_mixlm , ~ RI , at = mylist )))
+
+```
+
+#plot
+```{r}
+
+plot_c <- ggplot( data = paper3_data_no_topdress_sUASndre , aes( x = RI , y = relative_grain_yield)) +
+  geom_point( data = paper3_data_no_topdress_sUASndre , aes( x = RI , y = relative_grain_yield , shape = site_year) , size = 3) +
+  geom_line( data = sUASndre_emmeans , aes(x = RI , y = emmean) , color = "black" , size = 1.5) +
+  theme_classic() +
+  labs( x = NULL , y = NULL , shape = "Site-Year") +
+  scale_x_continuous(breaks = seq(1 , 5 , by = .5)) +
+  scale_y_continuous(breaks = seq(0 , 1 , by = .2)) +
+  coord_cartesian(ylim = c(0,1) , xlim = c(1,5)) +
+  geom_vline(xintercept = 1 , size = 0.5) +
+  theme(axis.text = element_text(size = 28),
+        axis.title = element_text(size = 28),
+        legend.text = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        legend.position = "none") +
+  annotate("text", x=3, y=.5, label="R² = 0.75, slope = -0.60", size=7 , color = "black") +
+  annotate("text", x=3, y=.6, label="sUAS NDRE", size=7 , color = "black") +
+  scale_shape_manual(values = c(1:20))
+
+plot_c
+```
+
+#grid
+```{r}
+
+plot6 <- grid.arrange(arrangeGrob(plot_a,
+                                  plot_c,
+                                  plot_b,
+                                  left = textGrob("Relative Grain Yield" , rot = 90 , gp = gpar(fontsize = 32)),
+                                  bottom = textGrob("Response Index" , gp = gpar(fontsize = 32))))
+
+plot6
+
+ggsave("FIGURES/Paper3_plot6.tiff" , plot6 , compression = "lzw" , width = 16 , height = 16, type = "cairo" , dpi = 750)
+```
+
+#***********
+
+#LME() w/ Index
+
+#gs ndvi 
+
+#model
+
+```{r}
+
+gsndvi_yield_mixlm <- lme(fixed = GrainYield_Mgha ~ Index ,
+                          random = ~I(Index) | site_year,
+                          control = ctrl,
+                          data = paper3_data_no_topdress_gsndvi)
+
+summary(gsndvi_yield_mixlm)
+
+Anova(gsndvi_yield_mixlm , type = 2)
+Anova(gsndvi_yield_mixlm , type = 3)
+
+r.squaredGLMM(gsndvi_yield_mixlm)
+
+```
+
+#diagnostics
+```{r}
+
+plot (gsndvi_yield_mixlm)
+
+plot(resid(gsndvi_yield_mixlm, type = "normalized") ~fitted(gsndvi_yield_mixlm))
+
+gsndvi_yield_mixlm_y <- resid(gsndvi_yield_mixlm, type = "normalized")
+gsndvi_yield_mixlm_x <- fitted(gsndvi_yield_mixlm)
+
+gsndvi_yield_mixlmresid_data <- data.frame(gsndvi_yield_mixlm_x , gsndvi_yield_mixlm_y)
+
+ggplot( data = gsndvi_yield_mixlmresid_data , aes( x = gsndvi_yield_mixlm_x , y = gsndvi_yield_mixlm_y)) +
+  geom_point(mapping = aes(gsndvi_yield_mixlm_x , gsndvi_yield_mixlm_y) , data = gsndvi_yield_mixlmresid_data)
+
+hist(resid(gsndvi_yield_mixlm))
+
+
+plot(gsndvi_yield_mixlm, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(gsndvi_yield_mixlm, abline = c(0,1) )
+
+
+qqnorm(resid(gsndvi_yield_mixlm))
+qqline(resid(gsndvi_yield_mixlm))
+
+
+qqnorm(gsndvi_yield_mixlm , ~resid(.) | site_year)
+
+plot(ranef(gsndvi_yield_mixlm))
+
+pairs(gsndvi_yield_mixlm , id = 0.1) 
+
+qqnorm(gsndvi_yield_mixlm , ~ranef(.))
+
+plot( gsndvi_yield_mixlm, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#outlier removal
+
+```{r}
+
+paper3_data_no_topdress_gsndvi_OR <- paper3_data_no_topdress_gsndvi[-(c(which(abs(residuals(gsndvi_yield_mixlm, type = "normalized"))>qnorm(0.99)))),]
+
+```
+
+#rerun model sans outliers
+
+```{r}
+
+gsndvi_yield_mixlm_OR <- lme(GrainYield_Mgha ~ Index  ,
+             control = ctrl ,
+             random = ~ I(Index) | site_year  , 
+             data = paper3_data_no_topdress_gsndvi_OR)
+
+summary(gsndvi_yield_mixlm_OR)
+
+summary(gsndvi_yield_mixlm_OR)$tTable
+
+Anova(gsndvi_yield_mixlm_OR , type = 2)
+Anova(gsndvi_yield_mixlm_OR , type = 3)
+
+gsndvi_r_sq <- r.squaredGLMM(gsndvi_yield_mixlm_OR)
+
+gsndvi_r_sq_fixed <- round(gsndvi_r_sq[1] , digits = 2)
+gsndvi_r_sq_fixed
+
+gsndvi_r_sq_total <- round(gsndvi_r_sq[2] , digits = 2)
+gsndvi_r_sq_total
+
+gsndvi_r_sq_random <- gsndvi_r_sq_total - gsndvi_r_sq_fixed
+gsndvi_r_sq_random
+
+
+```
+
+# model diagnostics
+
+```{r}
+
+plot (gsndvi_yield_mixlm_OR)
+
+plot(resid(gsndvi_yield_mixlm_OR, type = "normalized") ~fitted(gsndvi_yield_mixlm_OR))
+
+gsndvi_yield_mixlm_OR_y <- resid(gsndvi_yield_mixlm_OR, type = "normalized")
+gsndvi_yield_mixlm_OR_x <- fitted(gsndvi_yield_mixlm_OR)
+
+gsndvi_yield_mixlm_ORresid_data <- data.frame(gsndvi_yield_mixlm_OR_x , gsndvi_yield_mixlm_OR_y)
+
+ggplot( data = gsndvi_yield_mixlm_ORresid_data , aes( x = gsndvi_yield_mixlm_OR_x , y = gsndvi_yield_mixlm_OR_y)) +
+  geom_point(mapping = aes(gsndvi_yield_mixlm_OR_x , gsndvi_yield_mixlm_OR_y) , data = gsndvi_yield_mixlm_ORresid_data)
+
+hist(resid(gsndvi_yield_mixlm_OR))
+
+
+plot(gsndvi_yield_mixlm_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(gsndvi_yield_mixlm_OR, abline = c(0,1) )
+
+
+qqnorm(resid(gsndvi_yield_mixlm_OR))
+qqline(resid(gsndvi_yield_mixlm_OR))
+
+
+qqnorm(gsndvi_yield_mixlm_OR , ~resid(.) | site_year)
+
+plot(ranef(gsndvi_yield_mixlm_OR))
+
+pairs(gsndvi_yield_mixlm_OR , id = 0.1)
+
+qqnorm(gsndvi_yield_mixlm_OR , ~ranef(.))
+
+plot( gsndvi_yield_mixlm_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#emmeans
+
+```{r}
+
+mylist <- list(Index=seq(0.15 , 0.82 , by = .01))
+
+gsndvi_emmeans <- as.data.frame(summary(emmeans(gsndvi_yield_mixlm_OR , ~ Index , at = mylist )))
+
+
+```
+
+#plot
+```{r}
+
+ggplot( data = paper3_data_no_topdress_gsndvi_OR , aes( x = Index , y = GrainYield_Mgha)) +
+  geom_line( data = gsndvi_emmeans , aes(x = Index , y = emmean)) +
+  geom_ribbon(data = gsndvi_emmeans , aes(x = Index , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  coord_cartesian(ylim = c(0,14) , xlim = c(0,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+
+```
+
+#sUAS ndvi
+
+#model
+
+```{r}
+
+sUASndvi_yield_mixlm <- lme(fixed = GrainYield_Mgha ~ Index ,
+                          random = ~I(Index) | site_year,
+                          control = ctrl,
+                          data = paper3_data_no_topdress_sUASndvi)
+
+summary(sUASndvi_yield_mixlm)
+
+Anova(sUASndvi_yield_mixlm , type = 2)
+Anova(sUASndvi_yield_mixlm , type = 3)
+
+r.squaredGLMM(sUASndvi_yield_mixlm)
+
+```
+
+#diagnostics
+```{r}
+
+plot (sUASndvi_yield_mixlm)
+
+plot(resid(sUASndvi_yield_mixlm, type = "normalized") ~fitted(sUASndvi_yield_mixlm))
+
+sUASndvi_yield_mixlm_y <- resid(sUASndvi_yield_mixlm, type = "normalized")
+sUASndvi_yield_mixlm_x <- fitted(sUASndvi_yield_mixlm)
+
+sUASndvi_yield_mixlmresid_data <- data.frame(sUASndvi_yield_mixlm_x , sUASndvi_yield_mixlm_y)
+
+ggplot( data = sUASndvi_yield_mixlmresid_data , aes( x = sUASndvi_yield_mixlm_x , y = sUASndvi_yield_mixlm_y)) +
+  geom_point(mapping = aes(sUASndvi_yield_mixlm_x , sUASndvi_yield_mixlm_y) , data = sUASndvi_yield_mixlmresid_data)
+
+hist(resid(sUASndvi_yield_mixlm))
+
+
+plot(sUASndvi_yield_mixlm, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndvi_yield_mixlm, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndvi_yield_mixlm))
+qqline(resid(sUASndvi_yield_mixlm))
+
+
+qqnorm(sUASndvi_yield_mixlm , ~resid(.) | site_year)
+
+plot(ranef(sUASndvi_yield_mixlm))
+
+pairs(sUASndvi_yield_mixlm , id = 0.1) 
+
+qqnorm(sUASndvi_yield_mixlm , ~ranef(.))
+
+plot( sUASndvi_yield_mixlm, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#outlier removal
+
+```{r}
+
+paper3_data_no_topdress_sUASndvi_OR <- paper3_data_no_topdress_sUASndvi[-(c(which(abs(residuals(sUASndvi_yield_mixlm, type = "normalized"))>qnorm(0.99)))),]
+
+```
+
+#rerun model sans outliers
+
+```{r}
+
+sUASndvi_yield_mixlm_OR <- lme(GrainYield_Mgha ~ Index  ,
+             random = ~ I(Index) | site_year  , 
+             data = paper3_data_no_topdress_sUASndvi_OR)
+
+summary(sUASndvi_yield_mixlm_OR)
+
+summary(sUASndvi_yield_mixlm_OR)$tTable
+
+Anova(sUASndvi_yield_mixlm_OR , type = 2)
+Anova(sUASndvi_yield_mixlm_OR , type = 3)
+
+sUASndvi_r_sq <- r.squaredGLMM(sUASndvi_yield_mixlm_OR)
+
+sUASndvi_r_sq_fixed <- round(sUASndvi_r_sq[1] , digits = 2)
+sUASndvi_r_sq_fixed
+
+sUASndvi_r_sq_total <- round(sUASndvi_r_sq[2] , digits = 2)
+sUASndvi_r_sq_total
+
+sUASndvi_r_sq_random <- sUASndvi_r_sq_total - sUASndvi_r_sq_fixed
+sUASndvi_r_sq_random
+
+
+```
+
+# model diagnostics
+
+```{r}
+
+plot (sUASndvi_yield_mixlm_OR)
+
+plot(resid(sUASndvi_yield_mixlm_OR, type = "normalized") ~fitted(sUASndvi_yield_mixlm_OR))
+
+sUASndvi_yield_mixlm_OR_y <- resid(sUASndvi_yield_mixlm_OR, type = "normalized")
+sUASndvi_yield_mixlm_OR_x <- fitted(sUASndvi_yield_mixlm_OR)
+
+sUASndvi_yield_mixlm_ORresid_data <- data.frame(sUASndvi_yield_mixlm_OR_x , sUASndvi_yield_mixlm_OR_y)
+
+ggplot( data = sUASndvi_yield_mixlm_ORresid_data , aes( x = sUASndvi_yield_mixlm_OR_x , y = sUASndvi_yield_mixlm_OR_y)) +
+  geom_point(mapping = aes(sUASndvi_yield_mixlm_OR_x , sUASndvi_yield_mixlm_OR_y) , data = sUASndvi_yield_mixlm_ORresid_data)
+
+hist(resid(sUASndvi_yield_mixlm_OR))
+
+
+plot(sUASndvi_yield_mixlm_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndvi_yield_mixlm_OR, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndvi_yield_mixlm_OR))
+qqline(resid(sUASndvi_yield_mixlm_OR))
+
+
+qqnorm(sUASndvi_yield_mixlm_OR , ~resid(.) | site_year)
+
+plot(ranef(sUASndvi_yield_mixlm_OR))
+
+pairs(sUASndvi_yield_mixlm_OR , id = 0.1)
+
+qqnorm(sUASndvi_yield_mixlm_OR , ~ranef(.))
+
+plot( sUASndvi_yield_mixlm_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#emmeans
+
+```{r}
+
+mylist <- list(Index=seq(0.58 , 0.96 , by = .01))
+
+sUASndvi_emmeans <- as.data.frame(summary(emmeans(sUASndvi_yield_mixlm_OR , ~ Index , at = mylist )))
+
+
+```
+
+#plot
+```{r}
+
+ggplot( data = paper3_data_no_topdress_sUASndvi_OR , aes( x = Index , y = GrainYield_Mgha)) +
+  geom_line( data = sUASndvi_emmeans , aes(x = Index , y = emmean)) +
+  geom_ribbon(data = sUASndvi_emmeans , aes(x = Index , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  coord_cartesian(ylim = c(0,14) , xlim = c(0,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+
+```
+
+#sUAS ndre
+
+#model
+
+```{r}
+
+sUASndre_yield_mixlm <- lme(fixed = GrainYield_Mgha ~ Index ,
+                          random = ~I(Index) | site_year,
+                          control = ctrl,
+                          data = paper3_data_no_topdress_sUASndre)
+
+summary(sUASndre_yield_mixlm)
+
+Anova(sUASndre_yield_mixlm , type = 2)
+Anova(sUASndre_yield_mixlm , type = 3)
+
+r.squaredGLMM(sUASndre_yield_mixlm)
+
+```
+
+#diagnostics
+```{r}
+
+plot (sUASndre_yield_mixlm)
+
+plot(resid(sUASndre_yield_mixlm, type = "normalized") ~fitted(sUASndre_yield_mixlm))
+
+sUASndre_yield_mixlm_y <- resid(sUASndre_yield_mixlm, type = "normalized")
+sUASndre_yield_mixlm_x <- fitted(sUASndre_yield_mixlm)
+
+sUASndre_yield_mixlmresid_data <- data.frame(sUASndre_yield_mixlm_x , sUASndre_yield_mixlm_y)
+
+ggplot( data = sUASndre_yield_mixlmresid_data , aes( x = sUASndre_yield_mixlm_x , y = sUASndre_yield_mixlm_y)) +
+  geom_point(mapping = aes(sUASndre_yield_mixlm_x , sUASndre_yield_mixlm_y) , data = sUASndre_yield_mixlmresid_data)
+
+hist(resid(sUASndre_yield_mixlm))
+
+
+plot(sUASndre_yield_mixlm, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndre_yield_mixlm, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndre_yield_mixlm))
+qqline(resid(sUASndre_yield_mixlm))
+
+
+qqnorm(sUASndre_yield_mixlm , ~resid(.) | site_year)
+
+plot(ranef(sUASndre_yield_mixlm))
+
+pairs(sUASndre_yield_mixlm , id = 0.1) 
+
+qqnorm(sUASndre_yield_mixlm , ~ranef(.))
+
+plot( sUASndre_yield_mixlm, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+
+
+#outlier removal
+
+```{r}
+
+paper3_data_no_topdress_sUASndre_OR <- paper3_data_no_topdress_sUASndre[-(c(which(abs(residuals(sUASndre_yield_mixlm, type = "normalized"))>qnorm(0.99)))),]
+
+```
+
+#rerun model sans outliers
+
+```{r}
+
+sUASndre_yield_mixlm_OR <- lme(GrainYield_Mgha ~ Index  ,
+             control = ctrl ,
+             random = ~ I(Index) | site_year  , 
+             data = paper3_data_no_topdress_sUASndre_OR)
+
+summary(sUASndre_yield_mixlm_OR)
+
+summary(sUASndre_yield_mixlm_OR)$tTable
+
+Anova(sUASndre_yield_mixlm_OR , type = 2)
+Anova(sUASndre_yield_mixlm_OR , type = 3)
+
+sUASndre_r_sq <- r.squaredGLMM(sUASndre_yield_mixlm_OR)
+
+sUASndre_r_sq_fixed <- round(sUASndre_r_sq[1] , digits = 2)
+sUASndre_r_sq_fixed
+
+sUASndre_r_sq_total <- round(sUASndre_r_sq[2] , digits = 2)
+sUASndre_r_sq_total
+
+sUASndre_r_sq_random <- sUASndre_r_sq_total - sUASndre_r_sq_fixed
+sUASndre_r_sq_random
+
+
+```
+
+# model diagnostics
+
+```{r}
+
+plot (sUASndre_yield_mixlm_OR)
+
+plot(resid(sUASndre_yield_mixlm_OR, type = "normalized") ~fitted(sUASndre_yield_mixlm_OR))
+
+sUASndre_yield_mixlm_OR_y <- resid(sUASndre_yield_mixlm_OR, type = "normalized")
+sUASndre_yield_mixlm_OR_x <- fitted(sUASndre_yield_mixlm_OR)
+
+sUASndre_yield_mixlm_ORresid_data <- data.frame(sUASndre_yield_mixlm_OR_x , sUASndre_yield_mixlm_OR_y)
+
+ggplot( data = sUASndre_yield_mixlm_ORresid_data , aes( x = sUASndre_yield_mixlm_OR_x , y = sUASndre_yield_mixlm_OR_y)) +
+  geom_point(mapping = aes(sUASndre_yield_mixlm_OR_x , sUASndre_yield_mixlm_OR_y) , data = sUASndre_yield_mixlm_ORresid_data)
+
+hist(resid(sUASndre_yield_mixlm_OR))
+
+
+plot(sUASndre_yield_mixlm_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndre_yield_mixlm_OR, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndre_yield_mixlm_OR))
+qqline(resid(sUASndre_yield_mixlm_OR))
+
+
+qqnorm(sUASndre_yield_mixlm_OR , ~resid(.) | site_year)
+
+plot(ranef(sUASndre_yield_mixlm_OR))
+
+pairs(sUASndre_yield_mixlm_OR , id = 0.1)
+
+qqnorm(sUASndre_yield_mixlm_OR , ~ranef(.))
+
+plot( sUASndre_yield_mixlm_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#emmeans
+
+```{r}
+
+mylist <- list(Index=seq(0.3 , 0.79 , by = .01))
+
+sUASndre_emmeans <- as.data.frame(summary(emmeans(sUASndre_yield_mixlm_OR , ~ Index , at = mylist )))
+
+
+```
+
+#plot
+```{r}
+
+ggplot( data = paper3_data_no_topdress_sUASndre_OR , aes( x = Index , y = GrainYield_Mgha)) +
+  geom_line( data = sUASndre_emmeans , aes(x = Index , y = emmean)) +
+  geom_ribbon(data = sUASndre_emmeans , aes(x = Index , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  coord_cartesian(ylim = c(0,14) , xlim = c(0,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+
+```
+
+#plot
+```{r}
+
+ggplot( data = paper3_data_no_topdress_sUASndre_OR , aes( x = Index , y = GrainYield_Mgha)) +
+  geom_line( data = sUASndre_emmeans , aes(x = Index , y = emmean)) +
+  geom_ribbon(data = sUASndre_emmeans , aes(x = Index , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  geom_line( data = gsndvi_emmeans , aes(x = Index , y = emmean)) +
+  geom_ribbon(data = gsndvi_emmeans , aes(x = Index , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  geom_line( data = sUASndvi_emmeans , aes(x = Index , y = emmean)) +
+  geom_ribbon(data = sUASndvi_emmeans , aes(x = Index , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  coord_cartesian(ylim = c(0,14) , xlim = c( 0 ,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+
+```
+
+#*******************
+
+#making lme() w/ SI
+
+#gs ndvi si
+
+#model
+
+```{r}
+
+gsndvi_yield_mixlm <- lme(fixed = GrainYield_Mgha ~ SI ,
+                          random = ~I(SI) | site_year,
+                          control = ctrl,
+                          data = paper3_data_no_topdress_gsndvi)
+
+summary(gsndvi_yield_mixlm)
+
+Anova(gsndvi_yield_mixlm , type = 2)
+Anova(gsndvi_yield_mixlm , type = 3)
+
+r.squaredGLMM(gsndvi_yield_mixlm)
+
+```
+
+#diagnostics
+```{r}
+
+plot (gsndvi_yield_mixlm)
+
+plot(resid(gsndvi_yield_mixlm, type = "normalized") ~fitted(gsndvi_yield_mixlm))
+
+gsndvi_yield_mixlm_y <- resid(gsndvi_yield_mixlm, type = "normalized")
+gsndvi_yield_mixlm_x <- fitted(gsndvi_yield_mixlm)
+
+gsndvi_yield_mixlmresid_data <- data.frame(gsndvi_yield_mixlm_x , gsndvi_yield_mixlm_y)
+
+ggplot( data = gsndvi_yield_mixlmresid_data , aes( x = gsndvi_yield_mixlm_x , y = gsndvi_yield_mixlm_y)) +
+  geom_point(mapping = aes(gsndvi_yield_mixlm_x , gsndvi_yield_mixlm_y) , data = gsndvi_yield_mixlmresid_data)
+
+hist(resid(gsndvi_yield_mixlm))
+
+
+plot(gsndvi_yield_mixlm, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(gsndvi_yield_mixlm, abline = c(0,1) )
+
+
+qqnorm(resid(gsndvi_yield_mixlm))
+qqline(resid(gsndvi_yield_mixlm))
+
+
+qqnorm(gsndvi_yield_mixlm , ~resid(.) | site_year)
+
+plot(ranef(gsndvi_yield_mixlm))
+
+pairs(gsndvi_yield_mixlm , id = 0.1) 
+
+qqnorm(gsndvi_yield_mixlm , ~ranef(.))
+
+plot( gsndvi_yield_mixlm, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#outlier removal
+
+```{r}
+
+paper3_data_no_topdress_gsndvi_OR <- paper3_data_no_topdress_gsndvi[-(c(which(abs(residuals(gsndvi_yield_mixlm, type = "normalized"))>qnorm(0.99)))),]
+
+```
+
+#rerun model sans outliers
+
+```{r}
+
+gsndvi_yield_mixlm_OR <- lme(GrainYield_Mgha ~ SI  ,
+             control = ctrl ,
+             random = ~ I(SI) | site_year  , 
+             data = paper3_data_no_topdress_gsndvi_OR)
+
+summary(gsndvi_yield_mixlm_OR)
+
+summary(gsndvi_yield_mixlm_OR)$tTable
+
+Anova(gsndvi_yield_mixlm_OR , type = 2)
+Anova(gsndvi_yield_mixlm_OR , type = 3)
+
+gsndvi_r_sq <- r.squaredGLMM(gsndvi_yield_mixlm_OR)
+
+gsndvi_r_sq_fixed <- round(gsndvi_r_sq[1] , digits = 2)
+gsndvi_r_sq_fixed
+
+gsndvi_r_sq_total <- round(gsndvi_r_sq[2] , digits = 2)
+gsndvi_r_sq_total
+
+gsndvi_r_sq_random <- gsndvi_r_sq_total - gsndvi_r_sq_fixed
+gsndvi_r_sq_random
+
+
+```
+
+# model diagnostics
+
+```{r}
+
+plot (gsndvi_yield_mixlm_OR)
+
+plot(resid(gsndvi_yield_mixlm_OR, type = "normalized") ~fitted(gsndvi_yield_mixlm_OR))
+
+gsndvi_yield_mixlm_OR_y <- resid(gsndvi_yield_mixlm_OR, type = "normalized")
+gsndvi_yield_mixlm_OR_x <- fitted(gsndvi_yield_mixlm_OR)
+
+gsndvi_yield_mixlm_ORresid_data <- data.frame(gsndvi_yield_mixlm_OR_x , gsndvi_yield_mixlm_OR_y)
+
+ggplot( data = gsndvi_yield_mixlm_ORresid_data , aes( x = gsndvi_yield_mixlm_OR_x , y = gsndvi_yield_mixlm_OR_y)) +
+  geom_point(mapping = aes(gsndvi_yield_mixlm_OR_x , gsndvi_yield_mixlm_OR_y) , data = gsndvi_yield_mixlm_ORresid_data)
+
+hist(resid(gsndvi_yield_mixlm_OR))
+
+
+plot(gsndvi_yield_mixlm_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(gsndvi_yield_mixlm_OR, abline = c(0,1) )
+
+
+qqnorm(resid(gsndvi_yield_mixlm_OR))
+qqline(resid(gsndvi_yield_mixlm_OR))
+
+
+qqnorm(gsndvi_yield_mixlm_OR , ~resid(.) | site_year)
+
+plot(ranef(gsndvi_yield_mixlm_OR))
+
+pairs(gsndvi_yield_mixlm_OR , id = 0.1)
+
+qqnorm(gsndvi_yield_mixlm_OR , ~ranef(.))
+
+plot( gsndvi_yield_mixlm_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#emmeans
+
+```{r}
+
+mylist <- list(SI=seq(0.20 , 1 , by = .01))
+
+gsndvi_emmeans <- as.data.frame(summary(emmeans(gsndvi_yield_mixlm_OR , ~ SI , at = mylist )))
+
+
+```
+
+#plot
+```{r}
+
+ggplot( data = paper3_data_no_topdress_gsndvi_OR , aes( x = SI , y = GrainYield_Mgha)) +
+  geom_line( data = gsndvi_emmeans , aes(x = SI , y = emmean)) +
+  geom_ribbon(data = gsndvi_emmeans , aes(x = SI , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  coord_cartesian(ylim = c(0,14) , xlim = c(0,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+
+```
+
+#sUAS ndvi si
+
+#model
+
+```{r}
+
+sUASndvi_yield_mixlm <- lme(fixed = GrainYield_Mgha ~ SI ,
+                          random = ~I(SI) | site_year,
+                          control = ctrl,
+                          data = paper3_data_no_topdress_sUASndvi)
+
+summary(sUASndvi_yield_mixlm)
+
+Anova(sUASndvi_yield_mixlm , type = 2)
+Anova(sUASndvi_yield_mixlm , type = 3)
+
+r.squaredGLMM(sUASndvi_yield_mixlm)
+
+```
+
+#diagnostics
+```{r}
+
+plot (sUASndvi_yield_mixlm)
+
+plot(resid(sUASndvi_yield_mixlm, type = "normalized") ~fitted(sUASndvi_yield_mixlm))
+
+sUASndvi_yield_mixlm_y <- resid(sUASndvi_yield_mixlm, type = "normalized")
+sUASndvi_yield_mixlm_x <- fitted(sUASndvi_yield_mixlm)
+
+sUASndvi_yield_mixlmresid_data <- data.frame(sUASndvi_yield_mixlm_x , sUASndvi_yield_mixlm_y)
+
+ggplot( data = sUASndvi_yield_mixlmresid_data , aes( x = sUASndvi_yield_mixlm_x , y = sUASndvi_yield_mixlm_y)) +
+  geom_point(mapping = aes(sUASndvi_yield_mixlm_x , sUASndvi_yield_mixlm_y) , data = sUASndvi_yield_mixlmresid_data)
+
+hist(resid(sUASndvi_yield_mixlm))
+
+
+plot(sUASndvi_yield_mixlm, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndvi_yield_mixlm, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndvi_yield_mixlm))
+qqline(resid(sUASndvi_yield_mixlm))
+
+
+qqnorm(sUASndvi_yield_mixlm , ~resid(.) | site_year)
+
+plot(ranef(sUASndvi_yield_mixlm))
+
+pairs(sUASndvi_yield_mixlm , id = 0.1) 
+
+qqnorm(sUASndvi_yield_mixlm , ~ranef(.))
+
+plot( sUASndvi_yield_mixlm, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#outlier removal
+
+```{r}
+
+paper3_data_no_topdress_sUASndvi_OR <- paper3_data_no_topdress_sUASndvi[-(c(which(abs(residuals(sUASndvi_yield_mixlm, type = "normalized"))>qnorm(0.99)))),]
+
+```
+
+#rerun model sans outliers
+
+```{r}
+
+sUASndvi_yield_mixlm_OR <- lme(GrainYield_Mgha ~ SI  ,
+             random = ~ I(SI) | site_year  , 
+             data = paper3_data_no_topdress_sUASndvi_OR)
+
+summary(sUASndvi_yield_mixlm_OR)
+
+summary(sUASndvi_yield_mixlm_OR)$tTable
+
+Anova(sUASndvi_yield_mixlm_OR , type = 2)
+Anova(sUASndvi_yield_mixlm_OR , type = 3)
+
+sUASndvi_r_sq <- r.squaredGLMM(sUASndvi_yield_mixlm_OR)
+
+sUASndvi_r_sq_fixed <- round(sUASndvi_r_sq[1] , digits = 2)
+sUASndvi_r_sq_fixed
+
+sUASndvi_r_sq_total <- round(sUASndvi_r_sq[2] , digits = 2)
+sUASndvi_r_sq_total
+
+sUASndvi_r_sq_random <- sUASndvi_r_sq_total - sUASndvi_r_sq_fixed
+sUASndvi_r_sq_random
+
+
+```
+
+# model diagnostics
+
+```{r}
+
+plot (sUASndvi_yield_mixlm_OR)
+
+plot(resid(sUASndvi_yield_mixlm_OR, type = "normalized") ~fitted(sUASndvi_yield_mixlm_OR))
+
+sUASndvi_yield_mixlm_OR_y <- resid(sUASndvi_yield_mixlm_OR, type = "normalized")
+sUASndvi_yield_mixlm_OR_x <- fitted(sUASndvi_yield_mixlm_OR)
+
+sUASndvi_yield_mixlm_ORresid_data <- data.frame(sUASndvi_yield_mixlm_OR_x , sUASndvi_yield_mixlm_OR_y)
+
+ggplot( data = sUASndvi_yield_mixlm_ORresid_data , aes( x = sUASndvi_yield_mixlm_OR_x , y = sUASndvi_yield_mixlm_OR_y)) +
+  geom_point(mapping = aes(sUASndvi_yield_mixlm_OR_x , sUASndvi_yield_mixlm_OR_y) , data = sUASndvi_yield_mixlm_ORresid_data)
+
+hist(resid(sUASndvi_yield_mixlm_OR))
+
+
+plot(sUASndvi_yield_mixlm_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndvi_yield_mixlm_OR, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndvi_yield_mixlm_OR))
+qqline(resid(sUASndvi_yield_mixlm_OR))
+
+
+qqnorm(sUASndvi_yield_mixlm_OR , ~resid(.) | site_year)
+
+plot(ranef(sUASndvi_yield_mixlm_OR))
+
+pairs(sUASndvi_yield_mixlm_OR , id = 0.1)
+
+qqnorm(sUASndvi_yield_mixlm_OR , ~ranef(.))
+
+plot( sUASndvi_yield_mixlm_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#emmeans
+
+```{r}
+
+mylist <- list(SI=seq(0.63 , 1 , by = .01))
+
+sUASndvi_emmeans <- as.data.frame(summary(emmeans(sUASndvi_yield_mixlm_OR , ~ SI , at = mylist )))
+
+
+```
+
+#plot
+```{r}
+
+ggplot( data = paper3_data_no_topdress_sUASndvi_OR , aes( x = SI , y = GrainYield_Mgha)) +
+  geom_line( data = sUASndvi_emmeans , aes(x = SI , y = emmean)) +
+  geom_ribbon(data = sUASndvi_emmeans , aes(x = SI , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  coord_cartesian(ylim = c(0,14) , xlim = c(0,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+
+```
+
+#sUAS ndre si
+
+#model
+
+```{r}
+
+sUASndre_yield_mixlm <- lme(fixed = GrainYield_Mgha ~ SI ,
+                          random = ~I(SI) | site_year,
+                          control = ctrl,
+                          data = paper3_data_no_topdress_sUASndre)
+
+summary(sUASndre_yield_mixlm)
+
+Anova(sUASndre_yield_mixlm , type = 2)
+Anova(sUASndre_yield_mixlm , type = 3)
+
+r.squaredGLMM(sUASndre_yield_mixlm)
+
+```
+
+#diagnostics
+```{r}
+
+plot (sUASndre_yield_mixlm)
+
+plot(resid(sUASndre_yield_mixlm, type = "normalized") ~fitted(sUASndre_yield_mixlm))
+
+sUASndre_yield_mixlm_y <- resid(sUASndre_yield_mixlm, type = "normalized")
+sUASndre_yield_mixlm_x <- fitted(sUASndre_yield_mixlm)
+
+sUASndre_yield_mixlmresid_data <- data.frame(sUASndre_yield_mixlm_x , sUASndre_yield_mixlm_y)
+
+ggplot( data = sUASndre_yield_mixlmresid_data , aes( x = sUASndre_yield_mixlm_x , y = sUASndre_yield_mixlm_y)) +
+  geom_point(mapping = aes(sUASndre_yield_mixlm_x , sUASndre_yield_mixlm_y) , data = sUASndre_yield_mixlmresid_data)
+
+hist(resid(sUASndre_yield_mixlm))
+
+
+plot(sUASndre_yield_mixlm, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndre_yield_mixlm, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndre_yield_mixlm))
+qqline(resid(sUASndre_yield_mixlm))
+
+
+qqnorm(sUASndre_yield_mixlm , ~resid(.) | site_year)
+
+plot(ranef(sUASndre_yield_mixlm))
+
+pairs(sUASndre_yield_mixlm , id = 0.1) 
+
+qqnorm(sUASndre_yield_mixlm , ~ranef(.))
+
+plot( sUASndre_yield_mixlm, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+
+
+#outlier removal
+
+```{r}
+
+paper3_data_no_topdress_sUASndre_OR <- paper3_data_no_topdress_sUASndre[-(c(which(abs(residuals(sUASndre_yield_mixlm, type = "normalized"))>qnorm(0.99)))),]
+
+```
+
+#rerun model sans outliers
+
+```{r}
+
+sUASndre_yield_mixlm_OR <- lme(GrainYield_Mgha ~ SI  ,
+             control = ctrl ,
+             random = ~ I(SI) | site_year  , 
+             data = paper3_data_no_topdress_sUASndre_OR)
+
+summary(sUASndre_yield_mixlm_OR)
+
+summary(sUASndre_yield_mixlm_OR)$tTable
+
+Anova(sUASndre_yield_mixlm_OR , type = 2)
+Anova(sUASndre_yield_mixlm_OR , type = 3)
+
+sUASndre_r_sq <- r.squaredGLMM(sUASndre_yield_mixlm_OR)
+
+sUASndre_r_sq_fixed <- round(sUASndre_r_sq[1] , digits = 2)
+sUASndre_r_sq_fixed
+
+sUASndre_r_sq_total <- round(sUASndre_r_sq[2] , digits = 2)
+sUASndre_r_sq_total
+
+sUASndre_r_sq_random <- sUASndre_r_sq_total - sUASndre_r_sq_fixed
+sUASndre_r_sq_random
+
+
+```
+
+# model diagnostics
+
+```{r}
+
+plot (sUASndre_yield_mixlm_OR)
+
+plot(resid(sUASndre_yield_mixlm_OR, type = "normalized") ~fitted(sUASndre_yield_mixlm_OR))
+
+sUASndre_yield_mixlm_OR_y <- resid(sUASndre_yield_mixlm_OR, type = "normalized")
+sUASndre_yield_mixlm_OR_x <- fitted(sUASndre_yield_mixlm_OR)
+
+sUASndre_yield_mixlm_ORresid_data <- data.frame(sUASndre_yield_mixlm_OR_x , sUASndre_yield_mixlm_OR_y)
+
+ggplot( data = sUASndre_yield_mixlm_ORresid_data , aes( x = sUASndre_yield_mixlm_OR_x , y = sUASndre_yield_mixlm_OR_y)) +
+  geom_point(mapping = aes(sUASndre_yield_mixlm_OR_x , sUASndre_yield_mixlm_OR_y) , data = sUASndre_yield_mixlm_ORresid_data)
+
+hist(resid(sUASndre_yield_mixlm_OR))
+
+
+plot(sUASndre_yield_mixlm_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndre_yield_mixlm_OR, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndre_yield_mixlm_OR))
+qqline(resid(sUASndre_yield_mixlm_OR))
+
+
+qqnorm(sUASndre_yield_mixlm_OR , ~resid(.) | site_year)
+
+plot(ranef(sUASndre_yield_mixlm_OR))
+
+pairs(sUASndre_yield_mixlm_OR , id = 0.1)
+
+qqnorm(sUASndre_yield_mixlm_OR , ~ranef(.))
+
+plot( sUASndre_yield_mixlm_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#emmeans
+
+```{r}
+
+mylist <- list(SI=seq(0.48 , 1 , by = .01))
+
+sUASndre_emmeans <- as.data.frame(summary(emmeans(sUASndre_yield_mixlm_OR , ~ SI , at = mylist )))
+
+
+```
+
+#plot
+```{r}
+
+ggplot( data = paper3_data_no_topdress_sUASndre_OR , aes( x = SI , y = GrainYield_Mgha)) +
+  geom_line( data = sUASndre_emmeans , aes(x = SI , y = emmean)) +
+  geom_ribbon(data = sUASndre_emmeans , aes(x = SI , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  coord_cartesian(ylim = c(0,14) , xlim = c( 0 ,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+
+```
+
+#plot
+```{r}
+
+ggplot( data = paper3_data_no_topdress_sUASndre_OR , aes( x = SI , y = GrainYield_Mgha)) +
+  geom_line( data = sUASndre_emmeans , aes(x = SI , y = emmean)) +
+  geom_ribbon(data = sUASndre_emmeans , aes(x = SI , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  geom_line( data = gsndvi_emmeans , aes(x = SI , y = emmean)) +
+  geom_ribbon(data = gsndvi_emmeans , aes(x = SI , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  geom_line( data = sUASndvi_emmeans , aes(x = SI , y = emmean)) +
+  geom_ribbon(data = sUASndvi_emmeans , aes(x = SI , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  coord_cartesian(ylim = c(0,14) , xlim = c( 0 ,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+
+```
+
+#****************
+
+#making lme() w/ SI^2
+
+#gs ndvi si
+
+#model
+
+```{r}
+
+gsndvi_yield_mixlm <- lme(fixed = GrainYield_Mgha ~ SI + I(SI*SI) ,
+                          random = ~I(SI) | site_year,
+                          data = paper3_data_no_topdress_gsndvi)
+
+summary(gsndvi_yield_mixlm)
+
+Anova(gsndvi_yield_mixlm , type = 2)
+Anova(gsndvi_yield_mixlm , type = 3)
+
+r.squaredGLMM(gsndvi_yield_mixlm)
+
+```
+
+#diagnostics
+```{r}
+
+plot (gsndvi_yield_mixlm)
+
+plot(resid(gsndvi_yield_mixlm, type = "normalized") ~fitted(gsndvi_yield_mixlm))
+
+gsndvi_yield_mixlm_y <- resid(gsndvi_yield_mixlm, type = "normalized")
+gsndvi_yield_mixlm_x <- fitted(gsndvi_yield_mixlm)
+
+gsndvi_yield_mixlmresid_data <- data.frame(gsndvi_yield_mixlm_x , gsndvi_yield_mixlm_y)
+
+ggplot( data = gsndvi_yield_mixlmresid_data , aes( x = gsndvi_yield_mixlm_x , y = gsndvi_yield_mixlm_y)) +
+  geom_point(mapping = aes(gsndvi_yield_mixlm_x , gsndvi_yield_mixlm_y) , data = gsndvi_yield_mixlmresid_data)
+
+hist(resid(gsndvi_yield_mixlm))
+
+
+plot(gsndvi_yield_mixlm, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(gsndvi_yield_mixlm, abline = c(0,1) )
+
+
+qqnorm(resid(gsndvi_yield_mixlm))
+qqline(resid(gsndvi_yield_mixlm))
+
+
+qqnorm(gsndvi_yield_mixlm , ~resid(.) | site_year)
+
+plot(ranef(gsndvi_yield_mixlm))
+
+pairs(gsndvi_yield_mixlm , id = 0.1) 
+
+qqnorm(gsndvi_yield_mixlm , ~ranef(.))
+
+plot( gsndvi_yield_mixlm, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#outlier removal
+
+```{r}
+
+paper3_data_no_topdress_gsndvi_OR <- paper3_data_no_topdress_gsndvi[-(c(which(abs(residuals(gsndvi_yield_mixlm, type = "normalized"))>qnorm(0.99)))),]
+
+```
+
+#rerun model sans outliers
+
+```{r}
+
+gsndvi_yield_mixlm_OR <- lme(GrainYield_Mgha ~ SI +I(SI*SI)  ,
+             random = ~ I(SI) | site_year  , 
+             data = paper3_data_no_topdress_gsndvi_OR)
+
+summary(gsndvi_yield_mixlm_OR)
+
+summary(gsndvi_yield_mixlm_OR)$tTable
+
+Anova(gsndvi_yield_mixlm_OR , type = 2)
+Anova(gsndvi_yield_mixlm_OR , type = 3)
+
+gsndvi_r_sq <- r.squaredGLMM(gsndvi_yield_mixlm_OR)
+
+gsndvi_r_sq_fixed <- round(gsndvi_r_sq[1] , digits = 2)
+gsndvi_r_sq_fixed
+
+gsndvi_r_sq_total <- round(gsndvi_r_sq[2] , digits = 2)
+gsndvi_r_sq_total
+
+gsndvi_r_sq_random <- gsndvi_r_sq_total - gsndvi_r_sq_fixed
+gsndvi_r_sq_random
+
+
+```
+
+# model diagnostics
+
+```{r}
+
+plot (gsndvi_yield_mixlm_OR)
+
+plot(resid(gsndvi_yield_mixlm_OR, type = "normalized") ~fitted(gsndvi_yield_mixlm_OR))
+
+gsndvi_yield_mixlm_OR_y <- resid(gsndvi_yield_mixlm_OR, type = "normalized")
+gsndvi_yield_mixlm_OR_x <- fitted(gsndvi_yield_mixlm_OR)
+
+gsndvi_yield_mixlm_ORresid_data <- data.frame(gsndvi_yield_mixlm_OR_x , gsndvi_yield_mixlm_OR_y)
+
+ggplot( data = gsndvi_yield_mixlm_ORresid_data , aes( x = gsndvi_yield_mixlm_OR_x , y = gsndvi_yield_mixlm_OR_y)) +
+  geom_point(mapping = aes(gsndvi_yield_mixlm_OR_x , gsndvi_yield_mixlm_OR_y) , data = gsndvi_yield_mixlm_ORresid_data)
+
+hist(resid(gsndvi_yield_mixlm_OR))
+
+
+plot(gsndvi_yield_mixlm_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(gsndvi_yield_mixlm_OR, abline = c(0,1) )
+
+
+qqnorm(resid(gsndvi_yield_mixlm_OR))
+qqline(resid(gsndvi_yield_mixlm_OR))
+
+
+qqnorm(gsndvi_yield_mixlm_OR , ~resid(.) | site_year)
+
+plot(ranef(gsndvi_yield_mixlm_OR))
+
+pairs(gsndvi_yield_mixlm_OR , id = 0.1)
+
+qqnorm(gsndvi_yield_mixlm_OR , ~ranef(.))
+
+plot( gsndvi_yield_mixlm_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#emmeans
+
+```{r}
+
+mylist <- list(SI=seq(0.20 , 1 , by = .01))
+
+gsndvi_emmeans <- as.data.frame(summary(emmeans(gsndvi_yield_mixlm_OR , ~ SI , at = mylist )))
+
+
+```
+
+#plot
+```{r}
+
+ggplot( data = paper3_data_no_topdress_gsndvi_OR , aes( x = SI , y = GrainYield_Mgha)) +
+  geom_line( data = gsndvi_emmeans , aes(x = SI , y = emmean)) +
+  geom_ribbon(data = gsndvi_emmeans , aes(x = SI , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  coord_cartesian(ylim = c(0,14) , xlim = c(0,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+
+```
+
+#sUAS ndvi si
+
+#model
+
+```{r}
+
+sUASndvi_yield_mixlm <- lme(fixed = GrainYield_Mgha ~ SI + I(SI*SI),
+                          random = ~I(SI) | site_year,
+                          data = paper3_data_no_topdress_sUASndvi)
+
+summary(sUASndvi_yield_mixlm)
+
+Anova(sUASndvi_yield_mixlm , type = 2)
+Anova(sUASndvi_yield_mixlm , type = 3)
+
+r.squaredGLMM(sUASndvi_yield_mixlm)
+
+```
+
+#diagnostics
+```{r}
+
+plot (sUASndvi_yield_mixlm)
+
+plot(resid(sUASndvi_yield_mixlm, type = "normalized") ~fitted(sUASndvi_yield_mixlm))
+
+sUASndvi_yield_mixlm_y <- resid(sUASndvi_yield_mixlm, type = "normalized")
+sUASndvi_yield_mixlm_x <- fitted(sUASndvi_yield_mixlm)
+
+sUASndvi_yield_mixlmresid_data <- data.frame(sUASndvi_yield_mixlm_x , sUASndvi_yield_mixlm_y)
+
+ggplot( data = sUASndvi_yield_mixlmresid_data , aes( x = sUASndvi_yield_mixlm_x , y = sUASndvi_yield_mixlm_y)) +
+  geom_point(mapping = aes(sUASndvi_yield_mixlm_x , sUASndvi_yield_mixlm_y) , data = sUASndvi_yield_mixlmresid_data)
+
+hist(resid(sUASndvi_yield_mixlm))
+
+
+plot(sUASndvi_yield_mixlm, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndvi_yield_mixlm, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndvi_yield_mixlm))
+qqline(resid(sUASndvi_yield_mixlm))
+
+
+qqnorm(sUASndvi_yield_mixlm , ~resid(.) | site_year)
+
+plot(ranef(sUASndvi_yield_mixlm))
+
+pairs(sUASndvi_yield_mixlm , id = 0.1) 
+
+qqnorm(sUASndvi_yield_mixlm , ~ranef(.))
+
+plot( sUASndvi_yield_mixlm, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#outlier removal
+
+```{r}
+
+paper3_data_no_topdress_sUASndvi_OR <- paper3_data_no_topdress_sUASndvi[-(c(which(abs(residuals(sUASndvi_yield_mixlm, type = "normalized"))>qnorm(0.99)))),]
+
+```
+
+#rerun model sans outliers
+
+```{r}
+
+sUASndvi_yield_mixlm_OR <- lme(GrainYield_Mgha ~ SI + I(SI*SI)  ,
+             random = ~ I(SI) | site_year  , 
+             data = paper3_data_no_topdress_sUASndvi_OR)
+
+summary(sUASndvi_yield_mixlm_OR)
+
+summary(sUASndvi_yield_mixlm_OR)$tTable
+
+Anova(sUASndvi_yield_mixlm_OR , type = 2)
+Anova(sUASndvi_yield_mixlm_OR , type = 3)
+
+sUASndvi_r_sq <- r.squaredGLMM(sUASndvi_yield_mixlm_OR)
+
+sUASndvi_r_sq_fixed <- round(sUASndvi_r_sq[1] , digits = 2)
+sUASndvi_r_sq_fixed
+
+sUASndvi_r_sq_total <- round(sUASndvi_r_sq[2] , digits = 2)
+sUASndvi_r_sq_total
+
+sUASndvi_r_sq_random <- sUASndvi_r_sq_total - sUASndvi_r_sq_fixed
+sUASndvi_r_sq_random
+
+
+```
+
+# model diagnostics
+
+```{r}
+
+plot (sUASndvi_yield_mixlm_OR)
+
+plot(resid(sUASndvi_yield_mixlm_OR, type = "normalized") ~fitted(sUASndvi_yield_mixlm_OR))
+
+sUASndvi_yield_mixlm_OR_y <- resid(sUASndvi_yield_mixlm_OR, type = "normalized")
+sUASndvi_yield_mixlm_OR_x <- fitted(sUASndvi_yield_mixlm_OR)
+
+sUASndvi_yield_mixlm_ORresid_data <- data.frame(sUASndvi_yield_mixlm_OR_x , sUASndvi_yield_mixlm_OR_y)
+
+ggplot( data = sUASndvi_yield_mixlm_ORresid_data , aes( x = sUASndvi_yield_mixlm_OR_x , y = sUASndvi_yield_mixlm_OR_y)) +
+  geom_point(mapping = aes(sUASndvi_yield_mixlm_OR_x , sUASndvi_yield_mixlm_OR_y) , data = sUASndvi_yield_mixlm_ORresid_data)
+
+hist(resid(sUASndvi_yield_mixlm_OR))
+
+
+plot(sUASndvi_yield_mixlm_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndvi_yield_mixlm_OR, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndvi_yield_mixlm_OR))
+qqline(resid(sUASndvi_yield_mixlm_OR))
+
+
+qqnorm(sUASndvi_yield_mixlm_OR , ~resid(.) | site_year)
+
+plot(ranef(sUASndvi_yield_mixlm_OR))
+
+pairs(sUASndvi_yield_mixlm_OR , id = 0.1)
+
+qqnorm(sUASndvi_yield_mixlm_OR , ~ranef(.))
+
+plot( sUASndvi_yield_mixlm_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#emmeans
+
+```{r}
+
+mylist <- list(SI=seq(0.63 , 1 , by = .01))
+
+sUASndvi_emmeans <- as.data.frame(summary(emmeans(sUASndvi_yield_mixlm_OR , ~ SI , at = mylist )))
+
+
+```
+
+#plot
+```{r}
+
+ggplot( data = paper3_data_no_topdress_sUASndvi_OR , aes( x = SI , y = GrainYield_Mgha)) +
+  geom_line( data = sUASndvi_emmeans , aes(x = SI , y = emmean)) +
+  geom_ribbon(data = sUASndvi_emmeans , aes(x = SI , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  coord_cartesian(ylim = c(0,14) , xlim = c(0,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+
+```
+
+#sUAS ndre si
+
+#model
+
+```{r}
+
+sUASndre_yield_mixlm <- lme(fixed = GrainYield_Mgha ~ SI + I(SI*SI),
+                          random = ~I(SI) | site_year,
+                          data = paper3_data_no_topdress_sUASndre)
+
+summary(sUASndre_yield_mixlm)
+
+Anova(sUASndre_yield_mixlm , type = 2)
+Anova(sUASndre_yield_mixlm , type = 3)
+
+r.squaredGLMM(sUASndre_yield_mixlm)
+
+```
+
+#diagnostics
+```{r}
+
+plot (sUASndre_yield_mixlm)
+
+plot(resid(sUASndre_yield_mixlm, type = "normalized") ~fitted(sUASndre_yield_mixlm))
+
+sUASndre_yield_mixlm_y <- resid(sUASndre_yield_mixlm, type = "normalized")
+sUASndre_yield_mixlm_x <- fitted(sUASndre_yield_mixlm)
+
+sUASndre_yield_mixlmresid_data <- data.frame(sUASndre_yield_mixlm_x , sUASndre_yield_mixlm_y)
+
+ggplot( data = sUASndre_yield_mixlmresid_data , aes( x = sUASndre_yield_mixlm_x , y = sUASndre_yield_mixlm_y)) +
+  geom_point(mapping = aes(sUASndre_yield_mixlm_x , sUASndre_yield_mixlm_y) , data = sUASndre_yield_mixlmresid_data)
+
+hist(resid(sUASndre_yield_mixlm))
+
+
+plot(sUASndre_yield_mixlm, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndre_yield_mixlm, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndre_yield_mixlm))
+qqline(resid(sUASndre_yield_mixlm))
+
+
+qqnorm(sUASndre_yield_mixlm , ~resid(.) | site_year)
+
+plot(ranef(sUASndre_yield_mixlm))
+
+pairs(sUASndre_yield_mixlm , id = 0.1) 
+
+qqnorm(sUASndre_yield_mixlm , ~ranef(.))
+
+plot( sUASndre_yield_mixlm, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+
+
+#outlier removal
+
+```{r}
+
+paper3_data_no_topdress_sUASndre_OR <- paper3_data_no_topdress_sUASndre[-(c(which(abs(residuals(sUASndre_yield_mixlm, type = "normalized"))>qnorm(0.99)))),]
+
+```
+
+#rerun model sans outliers
+
+```{r}
+
+sUASndre_yield_mixlm_OR <- lme(GrainYield_Mgha ~ SI + I(SI*SI)  ,
+             random = ~ I(SI) | site_year  , 
+             data = paper3_data_no_topdress_sUASndre_OR)
+
+summary(sUASndre_yield_mixlm_OR)
+
+summary(sUASndre_yield_mixlm_OR)$tTable
+
+Anova(sUASndre_yield_mixlm_OR , type = 2)
+Anova(sUASndre_yield_mixlm_OR , type = 3)
+
+sUASndre_r_sq <- r.squaredGLMM(sUASndre_yield_mixlm_OR)
+
+sUASndre_r_sq_fixed <- round(sUASndre_r_sq[1] , digits = 2)
+sUASndre_r_sq_fixed
+
+sUASndre_r_sq_total <- round(sUASndre_r_sq[2] , digits = 2)
+sUASndre_r_sq_total
+
+sUASndre_r_sq_random <- sUASndre_r_sq_total - sUASndre_r_sq_fixed
+sUASndre_r_sq_random
+
+
+```
+
+# model diagnostics
+
+```{r}
+
+plot (sUASndre_yield_mixlm_OR)
+
+plot(resid(sUASndre_yield_mixlm_OR, type = "normalized") ~fitted(sUASndre_yield_mixlm_OR))
+
+sUASndre_yield_mixlm_OR_y <- resid(sUASndre_yield_mixlm_OR, type = "normalized")
+sUASndre_yield_mixlm_OR_x <- fitted(sUASndre_yield_mixlm_OR)
+
+sUASndre_yield_mixlm_ORresid_data <- data.frame(sUASndre_yield_mixlm_OR_x , sUASndre_yield_mixlm_OR_y)
+
+ggplot( data = sUASndre_yield_mixlm_ORresid_data , aes( x = sUASndre_yield_mixlm_OR_x , y = sUASndre_yield_mixlm_OR_y)) +
+  geom_point(mapping = aes(sUASndre_yield_mixlm_OR_x , sUASndre_yield_mixlm_OR_y) , data = sUASndre_yield_mixlm_ORresid_data)
+
+hist(resid(sUASndre_yield_mixlm_OR))
+
+
+plot(sUASndre_yield_mixlm_OR, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(sUASndre_yield_mixlm_OR, abline = c(0,1) )
+
+
+qqnorm(resid(sUASndre_yield_mixlm_OR))
+qqline(resid(sUASndre_yield_mixlm_OR))
+
+
+qqnorm(sUASndre_yield_mixlm_OR , ~resid(.) | site_year)
+
+plot(ranef(sUASndre_yield_mixlm_OR))
+
+pairs(sUASndre_yield_mixlm_OR , id = 0.1)
+
+qqnorm(sUASndre_yield_mixlm_OR , ~ranef(.))
+
+plot( sUASndre_yield_mixlm_OR, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+#emmeans
+
+```{r}
+
+mylist <- list(SI=seq(0.48 , 1 , by = .01))
+
+sUASndre_emmeans <- as.data.frame(summary(emmeans(sUASndre_yield_mixlm_OR , ~ SI , at = mylist )))
+
+
+```
+
+#plot
+```{r}
+
+ggplot( data = paper3_data_no_topdress_sUASndre_OR , aes( x = SI , y = GrainYield_Mgha)) +
+  geom_line( data = sUASndre_emmeans , aes(x = SI , y = emmean)) +
+  geom_ribbon(data = sUASndre_emmeans , aes(x = SI , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  coord_cartesian(ylim = c(0,14) , xlim = c( 0 ,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+
+```
+
+#plot
+```{r}
+
+ggplot( data = paper3_data_no_topdress_sUASndre_OR , aes( x = SI , y = GrainYield_Mgha)) +
+  geom_line( data = sUASndre_emmeans , aes(x = SI , y = emmean)) +
+  geom_ribbon(data = sUASndre_emmeans , aes(x = SI , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  geom_line( data = gsndvi_emmeans , aes(x = SI , y = emmean)) +
+  geom_ribbon(data = gsndvi_emmeans , aes(x = SI , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  geom_line( data = sUASndvi_emmeans , aes(x = SI , y = emmean)) +
+  geom_ribbon(data = sUASndvi_emmeans , aes(x = SI , y = emmean , ymin = emmean - SE , ymax = emmean + SE) , alpha = 0.2 ) +
+  coord_cartesian(ylim = c(0,14) , xlim = c( 0 ,1)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+
+```
+

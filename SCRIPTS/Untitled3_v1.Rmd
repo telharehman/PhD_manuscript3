@@ -1,0 +1,1607 @@
+---
+title: "Untitled3"
+author: "Telha H. Rehman"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+# START
+
+```{r}
+Sys.time()
+```
+
+```{r, echo = FALSE}
+
+library(knitr)
+
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+knitr::opts_knit$set(root.dir = "~/Desktop/Ph.D. Horticulture and Agronomy/PhD_manuscript3/R_project/PhD_manuscript3")
+```
+
+```{r , message=FALSE}
+
+library(tinytex)
+library(ggplot2)
+library(tidyverse)
+library(cowplot)
+library(Cairo)
+library(modelr)
+library(gridExtra)
+library(mixtools)
+library(nlme)
+library(car)
+library(emmeans)
+library(MuMIn)
+library(ggpmisc)
+library(gridExtra)
+library(gtable)
+library(grid)
+library(RColorBrewer)
+library(segmented)
+library(data.table)
+library(scales)
+
+```
+
+# Data Transformation
+
+##GreenSeeker NDVI Data
+
+```{r}
+
+gs_ndvi_data <- read_csv(file = "DATA/PI_greenseeker_data.csv")
+
+str(gs_ndvi_data , give.attr = FALSE)
+
+gs_ndvi_data <- gs_ndvi_data %>% 
+  filter(!year %in% c("2015" , "2016" , "2018"),
+         N_level_kgha != 275) #remove the years we don't need for this analysis and also the N rate that is too high 
+
+str(gs_ndvi_data , give.attr = FALSE)
+
+gs_ndvi_data <- gs_ndvi_data[c(1:144), c(1:17)] #removes the empty rows and columns from the data frame
+
+gs_ndvi_data$block <- factor(gs_ndvi_data$block) 
+gs_ndvi_data$year <- factor(gs_ndvi_data$year)
+gs_ndvi_data$plot <- factor(gs_ndvi_data$plot) 
+gs_ndvi_data$N_level_kgha_f <- factor(gs_ndvi_data$N_level_kgha)
+gs_ndvi_data$exp_plot_number <- factor(gs_ndvi_data$exp_plot_number)
+gs_ndvi_data$site_year <- factor(gs_ndvi_data$site_year , levels = c( "Nicolaus-17" , "Williams-17" , "Arbuckle-19" , "Davis-19" , "Marysville-19" , "RES-19" ))
+gs_ndvi_data$NDVI_1 <- as.numeric(as.character(gs_ndvi_data$NDVI_1))
+gs_ndvi_data$NDVI_2 <- as.numeric(as.character(gs_ndvi_data$NDVI_2))
+gs_ndvi_data$NDVI_3 <- as.numeric(as.character(gs_ndvi_data$NDVI_3))
+gs_ndvi_data$NDVI_4 <- as.numeric(as.character(gs_ndvi_data$NDVI_4)) #gets the data right
+
+str(gs_ndvi_data , give.attr = FALSE)
+
+gs_ndvi_data <-  gs_ndvi_data %>% 
+  mutate( biomass_dry_wt = biomass_plus_bag_g - (paper_bag_g * num_of_paper_bags) ,
+          aboveground_biomass = (biomass_dry_wt / ring_size) * 10 ,
+          n_content = sample_N_ug / sample_weight_mg ,
+          PI_N_Uptake = (aboveground_biomass * n_content) / 1000 #n uptake in kg per ha
+          )#processes the data
+
+
+gs_ndvi_data <- gs_ndvi_data %>% 
+  rowwise() %>% 
+  mutate(NDVI = mean(c( NDVI_1 , NDVI_2 , NDVI_3 , NDVI_4) , na.rm = T)) #takes average of four NDVI readings
+
+gs_ndvi_data <- dplyr::select(gs_ndvi_data ,
+                      site_year,
+                      year,
+                      exp_plot_number,
+                      block,
+                      plot,
+                      N_level_kgha,
+                      aboveground_biomass,
+                      n_content,
+                      PI_N_Uptake,
+                      NDVI) #selects the relevant columns
+
+gs_ndvi_data$site_year <- factor(gs_ndvi_data$site_year , levels = c( "Nicolaus-17" , "Williams-17" ,  "Arbuckle-19" , "Davis-19" , "Marysville-19" , "RES-19")) #orders site-years alphabetically
+
+hist(gs_ndvi_data$aboveground_biomass)
+hist(gs_ndvi_data$n_content)
+hist(gs_ndvi_data$PI_N_Uptake)
+```
+
+## Yield Data
+```{r}
+
+yield_data <- read_csv(file = "DATA/yield_data.csv")
+
+str(yield_data , give.attr = FALSE)
+
+yield_data <- yield_data %>% 
+  filter(!year %in% c( "2016" , "2018"),
+         N_level != "275") #removing the years and  N rate to match with NDVI data
+
+yield_data <- yield_data %>% 
+  mutate(
+    site_year = factor(site_year),
+    year = factor(year),
+    Block = factor(Block),
+    MainPlot = factor(MainPlot),
+    exp_plot_number = factor(exp_plot_number),
+    N_level = factor(N_level),
+    SubPlot = factor(SubPlot),
+    TopDress = factor(TopDress),
+    SeasonalNRate_f = factor(SeasonalNRate),
+    N_level_kgha_f = factor(N_level_kgha),
+    TopDress_kgha_f = factor(TopDress_kgha),
+    SeasonalNRate_kgha_f = factor(SeasonalNRate_kgha)
+    ) #changes these columns to factor
+
+str(yield_data , give.attr = FALSE)
+
+yield_data <- yield_data %>% 
+  mutate(
+    FW1net = FW1PlusTare - tare,
+    FW2net = FW2PlusTare - tare,
+    TotalFW = FW1net + FW2net,
+    SSFWnet = SSFWPlusTare - tare,
+    Ratio = SSFWnet / TotalFW, 
+    SSODWnet = SSODW - HarvestBagPlusTie, 
+    SeedTray1 = SeedTray1.1 + SeedTray1.2, #adds the decimal to the 243g to get the tare weight for the seedtray
+    Grain3net = Grain3PlusSeedTray1 - SeedTray1, #subtract tare of seed tray from grain3. Grain3 is the reweighed sample value
+    Grain4net = Grain4PlusSeedTray2 - SeedTray2, #grain4 is the amount of grain removed for ballmilling. this value came from another excel sheet
+    Grain2net = Grain2PlusPaperBag2 - PaperBag2, #yield component grain sample
+    Grain2net = Grain2net * Ratio, #this essentially subsamples the yield component grain sample
+    GrainNet = Grain3net + Grain4net + Grain2net, #add the grain removed for ball milling and yield component back to the reweighed grain sample
+    GrainRing = GrainNet / Ratio, #the amount of grain in the entire m^2 ring in grams
+    GrainYield = GrainRing * 10, #g/m^2 to kg/ha
+    GrainYield_kgha = GrainYield * ((100-MoistureContentGrain3)/86),#corrects for 14% moisture based on the moisture content readings from grain reweighing. values came from another excel sheet
+    GrainYield_Mgha = GrainYield_kgha / 1000 , #converts kg/ha to Mg/ha
+    Grain5 = GrainRing * ((100-MoistureContentGrain3)/98.1), #grain in the ring if the subsample was at 1.9% moisture
+    Grain6 = GrainNet * ((100-MoistureContentGrain3)/98.1), #grain in the subsample if it was at 1.9% moisture
+    StrawSS = SSODWnet - Grain6 , #just straw in subsample in grams 
+    StrawRing = StrawSS / Ratio, #straw in ring in grams i.e g/m2
+    StrawNcon = StrawN / StrawSampleSize,
+    StrawNup = (StrawRing * StrawNcon) / 100, #straw Nup divide by 100 to convert mg/m2 to kg/ha - this is correct
+    GrainNcon = (GrainN / GrainSampleSize), #grain in ring in kg/ha
+    GrainNup = (Grain5 * GrainNcon) / 100, #grain Nup divide by 100 to convert mg N/m2 to kg N/ha
+    TotalSeasonalNup = StrawNup + GrainNup, #in kg/ha
+    HarvestIndex = Grain5 / (Grain5 + StrawRing),
+    Moisture = SSFWnet / SSODWnet
+    )
+
+boxplot(yield_data$HarvestIndex)
+hist(yield_data$HarvestIndex)
+
+boxplot(yield_data$Moisture)
+hist(yield_data$Moisture)
+
+```
+
+```{r}
+
+#the data looks good - don't see any unusual values
+
+
+yield_data <- dplyr::select(yield_data,
+                               site_year,
+                               year,
+                               Block,
+                               MainPlot,
+                               SubPlot,
+                               exp_plot_number,
+                               N_level_kgha,
+                               N_level_kgha_f,
+                               TopDress_kgha, 
+                               TopDress_kgha_f,
+                               GrainYield_Mgha
+                               )
+           
+
+gs_data <- full_join(gs_ndvi_data , yield_data)
+
+
+gs_data <- tibble::rowid_to_column(gs_data, "ID") #adds a column with row number.
+
+gs_data <- dplyr::select(gs_data, 
+               site_year, 
+               year, 
+               exp_plot_number, 
+               Block, 
+               MainPlot, 
+               SubPlot, 
+               ID, 
+               N_level_kgha,
+               N_level_kgha_f,
+               TopDress_kgha, 
+               TopDress_kgha_f , 
+               PI_N_Uptake, 
+               NDVI, 
+               GrainYield_Mgha) #reorders the columns
+
+gs_data$site_year <- as.factor(gs_data$site_year)
+
+str(gs_data , give.attr = FALSE)
+
+boxplot(gs_data$GrainYield_Mgha)
+
+hist(gs_data$GrainYield_Mgha)
+
+hist(gs_data$NDVI)
+
+boxplot(gs_data$NDVI)
+
+boxplot(gs_data$PI_N_Uptake)
+
+hist(gs_data$PI_N_Uptake)
+
+#Overall data looks good -- no errors of data entry
+
+```
+
+## Calculating GS NDVI RI
+
+```{r}
+
+nic17 <- subset(gs_data, site_year == "Nicolaus-17")
+nic17maxNDVI <- apply(nic17 , 2 , max)
+nic17maxNDVI <- as.numeric(nic17maxNDVI[13])
+nic17maxNDVI
+
+wil17 <- subset(gs_data, site_year == "Williams-17")
+wil17maxNDVI <- apply(wil17 , 2 , max)
+wil17maxNDVI <- as.numeric(wil17maxNDVI[13])
+wil17maxNDVI
+
+arb19 <- subset(gs_data, site_year == "Arbuckle-19")
+arb19maxNDVI <- apply(arb19 , 2 , max)
+arb19maxNDVI <- as.numeric(arb19maxNDVI[13])
+arb19maxNDVI
+
+davis19 <- subset(gs_data, site_year == "Davis-19")
+davis19maxNDVI <- apply(davis19 , 2 , max)
+davis19maxNDVI <- as.numeric(davis19maxNDVI[13])
+davis19maxNDVI
+
+mry19 <- subset(gs_data, site_year == "Marysville-19")
+mry19maxNDVI <- apply(mry19 , 2 , max)
+mry19maxNDVI <- as.numeric(mry19maxNDVI[13])
+mry19maxNDVI
+
+res19 <- subset(gs_data, site_year == "RES-19")
+res19maxNDVI <- apply(res19 , 2 , max)
+res19maxNDVI <- as.numeric(res19maxNDVI[13])
+res19maxNDVI
+
+gs_data <- gs_data %>% 
+  mutate(max_NDVI = case_when(
+                          site_year == "Nicolaus-17" ~ nic17maxNDVI ,
+                          site_year == "Williams-17" ~ wil17maxNDVI ,
+                          site_year == "Arbuckle-19" ~ arb19maxNDVI ,
+                          site_year == "Davis-19" ~ davis19maxNDVI ,
+                          site_year == "Marysville-19" ~ mry19maxNDVI ,
+                          site_year == "RES-19" ~ res19maxNDVI)
+  )
+
+gs_data <- gs_data %>%
+  mutate(gs_NDVI_Response_Index = case_when(
+                          site_year == "Nicolaus-17" ~ nic17maxNDVI / NDVI,
+                          site_year == "Williams-17" ~ wil17maxNDVI / NDVI,
+                          site_year == "Arbuckle-19" ~ arb19maxNDVI / NDVI,
+                          site_year == "Davis-19" ~ davis19maxNDVI / NDVI,
+                          site_year == "Marysville-19" ~ mry19maxNDVI / NDVI,
+                          site_year == "RES-19" ~ res19maxNDVI / NDVI
+                        )) #calculates NDVI response index
+
+str(gs_data , give.attr = FALSE)
+
+gs_data$gs_NDVI_Response_Index <- round(gs_data$gs_NDVI_Response_Index , 3)
+
+hist(gs_data$gs_NDVI_Response_Index)
+boxplot(gs_data$gs_NDVI_Response_Index)
+hist(gs_data$GrainYield_Mgha)
+boxplot(gs_data$GrainYield_Mgha)
+
+gs_data$gs_NDVI_Response_Index[gs_data$gs_NDVI_Response_Index < 1] <- 1 #converts values less than 1, to 1.
+
+```
+
+##Drone Data
+
+```{r}
+
+drone_data <- read_csv(file = "DATA/PI_drone_data.csv")
+
+drone_data <- drone_data %>% 
+  filter(year != 2018,
+         N_level_kgha != 275)
+
+str(drone_data , give.attr = FALSE)
+
+drone_data <- drone_data %>% 
+  mutate(year = factor(year) ,
+         exp_plot_number = factor(exp_plot_number) ,
+         Block = factor(Block) ,
+         MainPlot = factor(MainPlot) ,
+         N_level = factor(N_level) ,
+         N_level_kgha_f = factor(N_level_kgha)
+  )
+
+drone_data$site_year <- factor(drone_data$site_year , levels = c("Nicolaus-17" , "Williams-17" , "Arbuckle-19" , "Davis-19" , "Marysville-19" , "RES-19"))
+
+str(drone_data , give.attr = FALSE)
+
+
+drone_data <- dplyr::select(drone_data ,
+                      site_year,
+                      year,
+                      exp_plot_number,
+                      Block,
+                      MainPlot,
+                      N_level,
+                      N_level_kgha,
+                      N_level_kgha_f,
+                      biomass_plus_bag_g,
+                      ring_size,
+                      paper_bag_g,
+                      num_of_paper_bags,
+                      sample_weight_mg,
+                      sample_N_ug,
+                      bluemean,
+                      greenmean,
+                      redmean,
+                      edgemean,
+                      nirmean
+                      )#selects the relevant columns
+
+str(drone_data , give.attr = FALSE)
+
+#visualize data2 to look for outliers
+
+boxplot(drone_data$bluemean)
+hist(drone_data$bluemean)
+
+boxplot(drone_data$greenmean)
+hist(drone_data$greenmean)
+
+boxplot(drone_data$redmean)
+hist(drone_data$redmean)
+
+boxplot(drone_data$edgemean)
+hist(drone_data$edgemean)
+
+boxplot(drone_data$nirmean)
+hist(drone_data$nirmean)
+
+```
+
+```{r}
+
+drone_data <-  drone_data %>% 
+  mutate( biomass_dry_wt = biomass_plus_bag_g - (paper_bag_g * num_of_paper_bags) ,
+          aboveground_biomass = (biomass_dry_wt / ring_size) * 10 , #ring size 0.5 m^2 biomass in kg per ha
+          n_content = sample_N_ug / sample_weight_mg ,
+          PI_N_Uptake = (aboveground_biomass * n_content) / 1000 #n uptake in kg per ha
+          )#processes the data2
+
+boxplot(drone_data$PI_N_Uptake)
+hist(drone_data$PI_N_Uptake)
+
+drone_data <- tibble::rowid_to_column(drone_data, "ID") #adds a columns with row number.
+
+drone_data <- drone_data %>% 
+  mutate(uas_NDRE = ((nirmean - edgemean) / (nirmean + edgemean)) ,
+         uas_NDVI = ((nirmean - redmean) / (nirmean + redmean))
+         ) #calculates NDRE and NDVI
+
+boxplot(drone_data$uas_NDRE)
+hist(drone_data$uas_NDRE)
+
+boxplot(drone_data$uas_NDVI)
+hist(drone_data$uas_NDVI)
+
+ggplot(data = drone_data, aes(x = PI_N_Uptake , y = uas_NDRE )) +
+  geom_point(mapping = aes(x = PI_N_Uptake , y = uas_NDRE , shape = site_year) , data = drone_data) +
+  theme_classic() +
+  scale_shape_manual(values = seq(4:20)) +
+  coord_cartesian(ylim = c(0,1))
+
+ggplot(data = drone_data, aes(x = PI_N_Uptake , y = uas_NDVI )) +
+  geom_point(mapping = aes(x = PI_N_Uptake , y = uas_NDVI , shape = site_year) , data = drone_data) +
+  theme_classic() +
+  scale_shape_manual(values = seq(4:20)) +
+  coord_cartesian(ylim = c(0,1))
+  
+```
+
+## Calculating RI
+```{r}
+#gets the max NDRE value for each site
+
+nic17 <- subset(drone_data, site_year == "Nicolaus-17")
+nic17 <- apply(nic17,2,max)
+nic17maxuas_NDRE <- as.numeric(nic17[25])
+nic17maxuas_NDRE
+nic17maxuas_NDVI <- as.numeric(nic17[26])
+nic17maxuas_NDVI
+
+wil17 <- subset(drone_data, site_year == "Williams-17")
+wil17 <- apply(wil17,2,max)
+wil17maxuas_NDRE <- as.numeric(wil17[25])
+wil17maxuas_NDRE
+wil17maxuas_NDVI <- as.numeric(wil17[26])
+wil17maxuas_NDVI
+
+arb19 <- subset(drone_data, site_year == "Arbuckle-19")
+arb19 <- apply(arb19,2,max)
+arb19maxuas_NDRE <- as.numeric(arb19[25])
+arb19maxuas_NDRE
+arb19maxuas_NDVI <- as.numeric(arb19[26])
+arb19maxuas_NDVI
+
+davis19 <- subset(drone_data, site_year == "Davis-19")
+davis19 <- apply(davis19,2,max)
+davis19maxuas_NDRE <- as.numeric(davis19[25])
+davis19maxuas_NDRE
+davis19maxuas_NDVI <- as.numeric(davis19[26])
+davis19maxuas_NDVI
+
+mry19 <- subset(drone_data, site_year == "Marysville-19")
+mry19 <- apply(mry19,2,max)
+mry19maxuas_NDRE <- as.numeric(mry19[25])
+mry19maxuas_NDRE
+mry19maxuas_NDVI <- as.numeric(mry19[26])
+mry19maxuas_NDVI
+
+res19 <- subset(drone_data, site_year == "RES-19")
+res19 <- apply(res19,2,max)
+res19maxuas_NDRE <- as.numeric(res19[25])
+res19maxuas_NDRE
+res19maxuas_NDVI <- as.numeric(res19[26])
+res19maxuas_NDVI
+
+drone_data <- drone_data %>% 
+  mutate(max_uas_NDRE = case_when(
+                          site_year == "Nicolaus-17" ~ nic17maxuas_NDRE ,
+                          site_year == "Williams-17" ~ wil17maxuas_NDRE ,
+                          site_year == "Arbuckle-19" ~ arb19maxuas_NDRE ,
+                          site_year == "Davis-19" ~ davis19maxuas_NDRE ,
+                          site_year == "Marysville-19" ~ mry19maxuas_NDRE ,
+                          site_year == "RES-19" ~ res19maxuas_NDRE) #assign the max NDRE value for each site
+  )
+
+drone_data <- drone_data %>%
+  mutate(uas_NDRE_Response_Index = case_when(
+                          site_year == "Nicolaus-17" ~ nic17maxuas_NDRE / uas_NDRE,
+                          site_year == "Williams-17" ~ wil17maxuas_NDRE / uas_NDRE,
+                          site_year == "Arbuckle-19" ~ arb19maxuas_NDRE / uas_NDRE,
+                          site_year == "Davis-19" ~ davis19maxuas_NDRE / uas_NDRE,
+                          site_year == "Marysville-19" ~ mry19maxuas_NDRE / uas_NDRE,
+                          site_year == "RES-19" ~ res19maxuas_NDRE / uas_NDRE
+                        )) #calculates uas_NDRE response index
+
+drone_data <- drone_data %>% 
+  mutate(max_uas_NDVI = case_when(
+                          site_year == "Nicolaus-17" ~ nic17maxuas_NDVI ,
+                          site_year == "Williams-17" ~ wil17maxuas_NDVI ,
+                          site_year == "Arbuckle-19" ~ arb19maxuas_NDVI ,
+                          site_year == "Davis-19" ~ davis19maxuas_NDVI ,
+                          site_year == "Marysville-19" ~ mry19maxuas_NDVI ,
+                          site_year == "RES-19" ~ res19maxuas_NDVI) #assign max ndvi value for each site
+  )
+
+drone_data <- drone_data %>%
+  mutate(uas_NDVI_Response_Index = case_when(
+                          site_year == "Nicolaus-17" ~ nic17maxuas_NDVI / uas_NDVI,
+                          site_year == "Williams-17" ~ wil17maxuas_NDVI / uas_NDVI,
+                          site_year == "Arbuckle-19" ~ arb19maxuas_NDVI / uas_NDVI,
+                          site_year == "Davis-19" ~ davis19maxuas_NDVI / uas_NDVI,
+                          site_year == "Marysville-19" ~ mry19maxuas_NDVI / uas_NDVI,
+                          site_year == "RES-19" ~ res19maxuas_NDVI / uas_NDVI
+                        )) #calculates uas_NDVI response index
+
+str(drone_data , give.attr =  F)
+
+boxplot(drone_data$uas_NDRE_Response_Index)
+hist(drone_data$uas_NDRE_Response_Index)
+
+boxplot(drone_data$uas_NDVI_Response_Index)
+hist(drone_data$uas_NDVI_Response_Index)
+
+```
+
+
+```{r}
+
+drone_data <- dplyr::select(drone_data ,
+                      site_year,
+                      year,
+                      exp_plot_number,
+                      Block,
+                      MainPlot,
+                      N_level_kgha,
+                      N_level_kgha_f,
+                      PI_N_Uptake,
+                      uas_NDRE,
+                      uas_NDVI,
+                      uas_NDRE_Response_Index,
+                      uas_NDVI_Response_Index
+                      )#selects the relevant columns
+
+sUAS_yield_data <- yield_data
+
+sUAS_yield_data$site_year <- factor(sUAS_yield_data$site_year , levels = c("Nicolaus-17" , "Williams-17" , "Arbuckle-19" , "Davis-19" , "Marysville-19" , "RES-19"))
+
+str(drone_data , give.attr = F)
+str(sUAS_yield_data , give.attr = F)
+
+sUAS_data <- full_join( drone_data , sUAS_yield_data)
+
+sUAS_data <- dplyr::select(sUAS_data ,
+                      site_year,
+                      year,
+                      exp_plot_number,
+                      Block,
+                      MainPlot,
+                      SubPlot,
+                      N_level_kgha,
+                      N_level_kgha_f,
+                      TopDress_kgha,
+                      TopDress_kgha_f,
+                      PI_N_Uptake,
+                      uas_NDRE,
+                      uas_NDVI,
+                      GrainYield_Mgha,
+                      uas_NDRE_Response_Index,
+                      uas_NDVI_Response_Index
+                      )#selects the relevant columns
+
+
+str(sUAS_data , give.attr = F)
+
+```
+
+##Combining the data
+```{r}
+
+gs_data <- gs_data %>% 
+  mutate(gs_NDVI_SI = 1 / gs_NDVI_Response_Index)
+
+sUAS_data <- sUAS_data %>% 
+  mutate(uas_NDVI_SI = 1 / uas_NDVI_Response_Index)
+
+sUAS_data <- sUAS_data %>% 
+  mutate(uas_NDRE_SI = 1 / uas_NDRE_Response_Index)
+
+gs_data <- gs_data %>% 
+  select(-ID)
+
+gs_data <- gs_data %>% 
+  dplyr::select(site_year ,
+                year,
+                exp_plot_number,
+                Block,
+                MainPlot,
+                SubPlot,
+                N_level_kgha,
+                N_level_kgha_f,
+                TopDress_kgha,
+                TopDress_kgha_f,
+                PI_N_Uptake, 
+                NDVI, 
+                GrainYield_Mgha,
+                gs_NDVI_Response_Index,
+                gs_NDVI_SI
+         )
+
+sUAS_data <- sUAS_data %>% 
+  dplyr::select(site_year ,
+                year,
+                exp_plot_number,
+                Block,
+                MainPlot,
+                SubPlot,
+                N_level_kgha,
+                N_level_kgha_f,
+                TopDress_kgha,
+                TopDress_kgha_f,
+                uas_NDRE,
+                uas_NDVI,
+                uas_NDVI_Response_Index,
+                uas_NDVI_SI,
+                uas_NDRE_Response_Index,
+                uas_NDRE_SI
+         )
+
+paper3_data <- full_join(gs_data , sUAS_data)
+
+```
+
+
+```{r}
+
+paper3_gsdata <- paper3_data %>% 
+  dplyr::select(site_year , 
+                year , 
+                exp_plot_number ,
+                Block ,
+                MainPlot ,
+                SubPlot ,
+                N_level_kgha ,
+                N_level_kgha_f ,
+                TopDress_kgha ,
+                TopDress_kgha_f ,
+                NDVI,
+                gs_NDVI_Response_Index,
+                gs_NDVI_SI ,
+                GrainYield_Mgha,
+                PI_N_Uptake) %>% 
+  mutate(Platform = "GreenSeeker_NDVI" ,
+        SI_sq = (gs_NDVI_SI * gs_NDVI_SI)) %>% 
+  rename(Index = NDVI , 
+         SI = gs_NDVI_SI,
+         RI = gs_NDVI_Response_Index)
+
+paper3_uas_ndvi_data <- paper3_data %>% 
+  dplyr::select(site_year , 
+                year , 
+                exp_plot_number ,
+                Block ,
+                MainPlot ,
+                SubPlot ,
+                N_level_kgha ,
+                N_level_kgha_f ,
+                TopDress_kgha ,
+                TopDress_kgha_f ,
+                uas_NDVI,
+                uas_NDVI_Response_Index,
+                uas_NDVI_SI ,
+                GrainYield_Mgha,
+                PI_N_Uptake) %>% 
+  mutate(Platform = "sUAS_NDVI" ,
+         SI_sq = (uas_NDVI_SI * uas_NDVI_SI)) %>% 
+  rename(Index = uas_NDVI,
+         SI = uas_NDVI_SI,
+         RI = uas_NDVI_Response_Index)
+
+paper3_uas_ndre_data <- paper3_data %>% 
+  dplyr::select(site_year , 
+                year , 
+                exp_plot_number ,
+                Block ,
+                MainPlot ,
+                SubPlot ,
+                N_level_kgha ,
+                N_level_kgha_f ,
+                TopDress_kgha ,
+                TopDress_kgha_f ,
+                uas_NDRE ,
+                uas_NDRE_Response_Index ,
+                uas_NDRE_SI ,
+                GrainYield_Mgha,
+                PI_N_Uptake) %>% 
+  mutate(Platform = "sUAS_NDRE" ,
+         SI_sq = (uas_NDRE_SI * uas_NDRE_SI)) %>% 
+  rename(Index = uas_NDRE ,
+         SI = uas_NDRE_SI,
+         RI = uas_NDRE_Response_Index)
+
+paper3_data <- rbind(paper3_gsdata ,
+                     paper3_uas_ndvi_data , 
+                     paper3_uas_ndre_data)
+
+paper3_data <- paper3_data %>% 
+  dplyr::select(site_year , 
+                year , 
+                Platform,
+                exp_plot_number ,
+                Block ,
+                MainPlot ,
+                SubPlot ,
+                N_level_kgha ,
+                N_level_kgha_f ,
+                TopDress_kgha ,
+                TopDress_kgha_f ,
+                Index,
+                RI,
+                SI ,
+                SI_sq ,
+                GrainYield_Mgha,
+                PI_N_Uptake)
+
+paper3_data$Platform <- as.factor(paper3_data$Platform)
+
+str(paper3_data , give.attr = F)
+
+```
+
+#FIGURES
+
+##Data for N Rate vs Index Figure
+```{r}
+
+#need to get the dataframe in the right form to make saturation figure for the paper
+
+paper3_data_0_gs <- paper3_data %>% 
+  select("site_year" , "year" , "Platform" , "exp_plot_number", "Block" , "MainPlot",    "N_level_kgha"  , "N_level_kgha_f" , "TopDress_kgha"  ,     "RI","GrainYield_Mgha" ) %>% 
+  filter(TopDress_kgha == 0 , Platform == "GreenSeeker_NDVI" ) %>% 
+  rename(TopDress_kgha_0 = TopDress_kgha,
+         GrainYield_Mgha_0 = GrainYield_Mgha) #filters out 0 top-dress rate and greenseeker NDVI
+
+paper3_data_25_gs <- paper3_data %>% 
+  select("site_year" , "year" , "Platform" , "exp_plot_number", "Block" , "MainPlot",  "N_level_kgha"  , "N_level_kgha_f" , "TopDress_kgha"  ,     "RI","GrainYield_Mgha" ) %>% 
+  filter(TopDress_kgha == 25 , Platform == "GreenSeeker_NDVI" ) %>% 
+  rename(TopDress_kgha_25 = TopDress_kgha,
+         GrainYield_Mgha_25 = GrainYield_Mgha) #filters 25 td rate and gs ndvi
+
+paper3_data_34_gs <- paper3_data %>% 
+  select("site_year" , "year" , "Platform" , "exp_plot_number", "Block" , "MainPlot",  "N_level_kgha"  , "N_level_kgha_f" , "TopDress_kgha"  ,      "RI","GrainYield_Mgha" ) %>% 
+  filter(TopDress_kgha == 34 , Platform == "GreenSeeker_NDVI" ) %>% 
+  rename(TopDress_kgha_34 = TopDress_kgha,
+         GrainYield_Mgha_34 = GrainYield_Mgha) #filters 34 td and gs ndvi
+
+paper3_data_50_gs <- paper3_data %>% 
+  select("site_year" , "year" , "Platform" , "exp_plot_number", "Block" , "MainPlot", "N_level_kgha"  , "N_level_kgha_f" , "TopDress_kgha"  ,      "RI","GrainYield_Mgha" ) %>% 
+  filter(TopDress_kgha == 50 , Platform == "GreenSeeker_NDVI" ) %>% 
+  rename(TopDress_kgha_50 = TopDress_kgha,
+         GrainYield_Mgha_50 = GrainYield_Mgha) #50 td and gs ndvi
+
+test_data1 <- full_join(paper3_data_0_gs , paper3_data_25_gs) #joins 0 and 25
+test_data2 <- full_join(test_data1 , paper3_data_34_gs) #adds 34
+test_data3 <- full_join(test_data2 , paper3_data_50_gs) #adds 50
+
+#got the data right for greenseeker ndvi. Now gotta do it for the other two platforms
+
+paper3_data_0_uas_NDVI <- paper3_data %>% 
+  select("site_year" , "year" , "Platform" , "exp_plot_number", "Block" , "MainPlot", "N_level_kgha"  , "N_level_kgha_f" , "TopDress_kgha"  ,      "RI","GrainYield_Mgha" ) %>% 
+  filter(TopDress_kgha == 0 , Platform == "sUAS_NDVI" ) %>% 
+  rename(TopDress_kgha_0 = TopDress_kgha,
+         GrainYield_Mgha_0 = GrainYield_Mgha) #filters out 0 top-dress rate and sUAS NDVI
+
+paper3_data_25_uas_NDVI <- paper3_data %>%
+  select("site_year" , "year" , "Platform" , "exp_plot_number", "Block" , "MainPlot", "N_level_kgha"  , "N_level_kgha_f" , "TopDress_kgha"  ,      "RI","GrainYield_Mgha" ) %>% 
+  filter(TopDress_kgha == 25 , Platform == "sUAS_NDVI" ) %>% 
+  rename(TopDress_kgha_25 = TopDress_kgha,
+         GrainYield_Mgha_25 = GrainYield_Mgha) #filters 25 td rate and sUAS ndvi
+
+paper3_data_34_uas_NDVI <- paper3_data %>% 
+  select("site_year" , "year" , "Platform" , "exp_plot_number", "Block" , "MainPlot", "N_level_kgha"  , "N_level_kgha_f" , "TopDress_kgha"  ,      "RI","GrainYield_Mgha" ) %>% 
+  filter(TopDress_kgha == 34 , Platform == "sUAS_NDVI" ) %>% 
+  rename(TopDress_kgha_34 = TopDress_kgha,
+         GrainYield_Mgha_34 = GrainYield_Mgha) #filters 34 td and sUAS ndvi
+
+paper3_data_50_uas_NDVI <- paper3_data %>%
+  select("site_year" , "year" , "Platform" , "exp_plot_number", "Block" , "MainPlot", "N_level_kgha"  , "N_level_kgha_f" , "TopDress_kgha"  ,      "RI","GrainYield_Mgha" ) %>% 
+  filter(TopDress_kgha == 50 , Platform == "sUAS_NDVI" ) %>% 
+  rename(TopDress_kgha_50 = TopDress_kgha,
+         GrainYield_Mgha_50 = GrainYield_Mgha) #50 td and sUAS ndvi
+
+test_data11 <- full_join(paper3_data_0_uas_NDVI , paper3_data_25_uas_NDVI) #joins 0 and 25
+test_data22 <- full_join(test_data11 , paper3_data_34_uas_NDVI) #adds 34
+test_data33 <- full_join(test_data22 , paper3_data_50_uas_NDVI) #adds 50
+
+#i named them with double digits to differentiate from the test datas above
+
+#now to repeat the steps one last time for suas_NDRE
+
+paper3_data_0_uas_NDRE <- paper3_data %>% 
+  select("site_year" , "year" , "Platform" , "exp_plot_number", "Block" , "MainPlot", "N_level_kgha"  , "N_level_kgha_f" , "TopDress_kgha"  ,      "RI","GrainYield_Mgha" ) %>% 
+  filter(TopDress_kgha == 0 , Platform == "sUAS_NDRE" ) %>% 
+  rename(TopDress_kgha_0 = TopDress_kgha,
+         GrainYield_Mgha_0 = GrainYield_Mgha) #filters out 0 top-dress rate and sUAS NDRE
+
+paper3_data_25_uas_NDRE <- paper3_data %>% 
+  select("site_year" , "year" , "Platform" , "exp_plot_number", "Block" , "MainPlot", "N_level_kgha"  , "N_level_kgha_f" , "TopDress_kgha"  ,      "RI","GrainYield_Mgha" ) %>% 
+  filter(TopDress_kgha == 25 , Platform == "sUAS_NDRE" ) %>% 
+  rename(TopDress_kgha_25 = TopDress_kgha,
+         GrainYield_Mgha_25 = GrainYield_Mgha) #filters 25 td rate and sUAS NDRE
+
+paper3_data_34_uas_NDRE <- paper3_data %>% 
+  select("site_year" , "year" , "Platform" , "exp_plot_number", "Block" , "MainPlot", "N_level_kgha"  , "N_level_kgha_f" , "TopDress_kgha"  ,      "RI","GrainYield_Mgha" ) %>% 
+  filter(TopDress_kgha == 34 , Platform == "sUAS_NDRE" ) %>% 
+  rename(TopDress_kgha_34 = TopDress_kgha,
+         GrainYield_Mgha_34 = GrainYield_Mgha) #filters 34 td and sUAS NDRE
+
+paper3_data_50_uas_NDRE <- paper3_data %>% 
+  select("site_year" , "year" , "Platform" , "exp_plot_number", "Block" , "MainPlot", "N_level_kgha"  , "N_level_kgha_f" , "TopDress_kgha"  ,      "RI","GrainYield_Mgha" ) %>% 
+  filter(TopDress_kgha == 50 , Platform == "sUAS_NDRE" ) %>% 
+  rename(TopDress_kgha_50 = TopDress_kgha,
+         GrainYield_Mgha_50 = GrainYield_Mgha) #50 td and sUAS NDRE
+
+test_data111 <- full_join(paper3_data_0_uas_NDRE , paper3_data_25_uas_NDRE) #joins 0 and 25
+test_data222 <- full_join(test_data111 , paper3_data_34_uas_NDRE) #adds 34
+test_data333 <- full_join(test_data222 , paper3_data_50_uas_NDRE) #adds 50
+
+#I have the mean NDVI/NDRE RI for each platform and the mean yield at each top-dress rate. I need to combine them all, get the mean response and then plot it all on a double y axis plot. I can do a bar chart or I can do all points. 
+
+sat_fig_data <- rbind(test_data3 , test_data33 , test_data333) #binds the three df's 
+
+#here I am going to need to select out sites with 25 & 50 td rate and 34 td rate separately, calculate the yield response, and then bind them. 
+
+sat_fig_data <- sat_fig_data %>% 
+  as.data.frame() %>% 
+  mutate(Yield_Response_Mgha_25 = GrainYield_Mgha_25 - GrainYield_Mgha_0 ,
+         Yield_Response_Mgha_34 = GrainYield_Mgha_34 - GrainYield_Mgha_0 ,
+         Yield_Response_Mgha_50 = GrainYield_Mgha_50 - GrainYield_Mgha_0) #calculates the GrainYield response for each top-dress rate. for some reason it was giving me an error so I added the as.data.frame line
+
+sat_fig_data <- sat_fig_data %>% 
+  mutate(Yield_Response_Mgha = (Yield_Response_Mgha_25 + Yield_Response_Mgha_50) / 2) #calculate mean yield response across 25 and 50 rate
+
+sat_fig_data_1 <- sat_fig_data %>% 
+  filter(site_year %in% c("Nicolaus-17" , "Williams-17")) %>% 
+  select(site_year , N_level_kgha , Platform , RI , Yield_Response_Mgha) #filters 2017 sites and selects relevant columns
+
+sat_fig_data_2 <- sat_fig_data %>% 
+  filter(!site_year %in% c("Nicolaus-17" , "Williams-17")) %>% 
+  select(site_year , N_level_kgha , Platform , RI , Yield_Response_Mgha_34) %>% 
+  rename(Yield_Response_Mgha = Yield_Response_Mgha_34) #filters 2019 data and selects relevant columns
+
+sat_fig_data <- rbind(sat_fig_data_1 , sat_fig_data_2) #rinds the two df's with the relevant data needed for the figure
+
+sat_fig_data <- sat_fig_data %>% 
+  mutate(RI_adj = RI - 1) #removes 1 from RI to make the scales work for dual axis plot, also adds response column for the bar chart legend.
+
+sat_fig_data <- sat_fig_data %>% 
+  group_by(site_year , N_level_kgha , Platform) %>% 
+  summarise(Mean_Yield_Response_Mgha = mean(Yield_Response_Mgha),
+            Yield_Response_Mgha_sd = sd(Yield_Response_Mgha),
+            Mean_RI_adj = mean(RI_adj)) %>% 
+  ungroup()
+
+sat_fig_data <- sat_fig_data %>% 
+  mutate(Response = "Grain Yield Response")
+
+sat_fig_data$Response <- as.factor(sat_fig_data$Response) #changes response to factor
+
+```
+
+##Yield Response Figure
+```{r}
+
+sat_fig_data$site_year <- factor(sat_fig_data$site_year , levels = c("Nicolaus-17" ,
+            "Williams-17" ,
+            "Arbuckle-19" ,
+            "Davis-19" ,
+            "Marysville-19" ,
+            "RES-19"))
+
+sites <- data.frame( 
+  label = c("Nicolaus-17" ,
+            "Williams-17" ,
+            "Arbuckle-19" ,
+            "Davis-19" ,
+            "Marysville-19" ,
+            "RES-19" ) ,
+  site_year = c("Nicolaus-17" ,
+            "Williams-17" ,
+            "Arbuckle-19" ,
+            "Davis-19" ,
+            "Marysville-19" ,
+            "RES-19"),
+  x_position = c(Inf , Inf , Inf , Inf , Inf , Inf ),
+  x_just_var = c(1.25 , 1.25 , 1.25 , 1.25 , 1.25 , 1.25  ) ,
+  y_position = c(-Inf , -Inf , -Inf , -Inf, -Inf , -Inf  ),
+  y_just_var = c(-17 , -17 , -17 , -17 , -13.25 , -16.5 )
+  )
+
+sites$label <- factor(sites$label)
+sites$site_year <- factor(sites$label)
+
+# Dual axis facet_wrap plot
+
+yield_resp_figure_1 <- ggplot(sat_fig_data , aes(x = N_level_kgha ,
+                                               y = Mean_Yield_Response_Mgha)) +
+  geom_col(filter(sat_fig_data , Platform == "GreenSeeker_NDVI") , 
+           mapping = aes(x = N_level_kgha ,
+                y = Mean_Yield_Response_Mgha ,
+                fill = Response), width = 25) +
+  geom_errorbar(aes(ymin = Mean_Yield_Response_Mgha - Yield_Response_Mgha_sd,
+                    ymax = Mean_Yield_Response_Mgha + Yield_Response_Mgha_sd), width=.2,
+                 position = position_dodge(.9))  +
+  geom_line(data = sat_fig_data  , aes(x = N_level_kgha ,
+                                               y = Mean_RI_adj ,
+                                       linetype = Platform) , size = 1.25) +
+  labs( x = "Pre-plant N Rate ( kg N ha"^-1~")" , y = "Mean Yield Response to Top-dress N ( Mg ha"^-1~")" , linetype = "Response-Index" , fill = NULL) +
+  scale_y_continuous(sec.axis = sec_axis(~ . + 1 , name = "Mean Response-Index")) +
+  facet_wrap(~site_year) +
+  geom_hline( yintercept = 0 , size = .5) +
+  theme_classic() +
+  theme(axis.title = element_text(size = 28)) +
+  theme(axis.text = element_text(size = 24)) +
+  theme(legend.text = element_text(size = 24)) +
+  theme(legend.title = element_text(size = 24)) +
+  theme(strip.text.x = element_blank()) +
+  theme(panel.spacing = unit(1.5, "lines")) +
+  geom_text( data = sites ,
+             mapping = aes( x = x_position ,
+                            hjust = x_just_var , 
+                            y = y_position , 
+                            vjust = y_just_var , 
+                            label = label) , 
+             size = 8 ,
+             parse = T)
+
+yield_resp_figure_1
+
+ggsave("FIGURES/Paper3_Fig_3_with_errorbar.tiff" , yield_resp_figure_1 , compression = "lzw" , width = 18 , height = 10, type = "cairo" , dpi = 750)
+
+yield_resp_figure_2 <- ggplot(sat_fig_data , aes(x = N_level_kgha ,
+                                               y = Mean_Yield_Response_Mgha)) +
+  geom_col(filter(sat_fig_data , Platform == "GreenSeeker_NDVI") , 
+           mapping = aes(x = N_level_kgha ,
+                y = Mean_Yield_Response_Mgha ,
+                fill = Response), width = 25) +
+  geom_line(data = sat_fig_data  , aes(x = N_level_kgha ,
+                                               y = Mean_RI_adj ,
+                                       linetype = Platform) , size = 1.25) +
+  labs( x = "Pre-plant N Rate ( kg N ha"^-1~")" , y = "Mean Yield Response to Top-dress N ( Mg ha"^-1~")" , linetype = "Response-Index" , fill = NULL) +
+  scale_y_continuous(sec.axis = sec_axis(~ . + 1 , name = "Mean Response-Index")) +
+  facet_wrap(~site_year) +
+  geom_hline( yintercept = 0 , size = .5) +
+  theme_classic() +
+  theme(axis.title = element_text(size = 28)) +
+  theme(axis.text = element_text(size = 24)) +
+  theme(legend.text = element_text(size = 24)) +
+  theme(legend.title = element_text(size = 24)) +
+  theme(strip.text.x = element_blank()) +
+  theme(panel.spacing = unit(1.5, "lines")) +
+  geom_text( data = sites ,
+             mapping = aes( x = x_position ,
+                            hjust = x_just_var , 
+                            y = y_position , 
+                            vjust = y_just_var , 
+                            label = label) , 
+             size = 8 ,
+             parse = T)
+
+yield_resp_figure_2
+
+ggsave("FIGURES/Paper3_Fig_3_without_errorbar.tiff" , yield_resp_figure_2 , compression = "lzw" , width = 18 , height = 10, type = "cairo" , dpi = 750)
+
+```
+
+
+```{r}
+
+
+Paper3_Fig2 <- ggplot(paper3_data,aes( x = N_level_kgha ,
+                               y = RI ,
+                               color = Platform)) + 
+  geom_point() +
+  theme_classic() + 
+  labs( x = "Pre-plant N Rate ( kg N ha"^-1~")" , y = "Index Value" ) +
+  geom_line(data = paper3_data) +
+  facet_wrap(~site_year , scales = "free_y") +
+  geom_hline(yintercept = 1.0)
+
+Paper3_Fig2
+
+ggsave("FIGURES/Paper3_Fig2.tiff" , Paper3_Fig2 , compression = "lzw" , width = 15 , height = 10, type = "cairo" , dpi = 750)
+
+```
+
+##PI Nup ~ Index Fig
+
+```{r}
+
+paper3_data_no_2018 <- paper3_data %>% 
+  filter(year != 2018)
+#first just look at the data
+
+Nup_fig <- ggplot( data = paper3_data_no_2018 , aes ( x = PI_N_Uptake , y = Index )) +
+  geom_point( mapping = aes( x = PI_N_Uptake , 
+                             y = Index , 
+                             shape = Platform) ,
+              size = 2.5 ,
+              data = paper3_data_no_2018) +
+  labs( x = "PI Total N Uptake ( kg N ha"^-1~")" , 
+        y = "Index Value",  
+        shape = "Platform" , 
+        color = "Platform") +
+  facet_wrap(~Platform ) +
+  theme_classic() +
+  theme(axis.title = element_text(size = 24),
+        axis.text = element_text(size = 20),
+        legend.text = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        legend.position = "none",
+        panel.spacing = unit(1.5, "lines"),
+        panel.background = element_rect(fill = "white", color = "grey0"),
+        strip.text.x = element_blank()) +
+  coord_cartesian(ylim = c(.19 , .95) , xlim = c(0, 260)) +
+  scale_y_continuous(breaks = c(seq(.2 , .9 , by = .1))) +
+  scale_x_continuous(breaks = c(0 , 50 , 100 , 150 , 200 , 250)) +
+  scale_shape_manual(values = c(1 , 1 , 1)) 
+
+
+Nup_fig
+
+
+```
+
+##models for greenseeker ndvi
+
+```{r}
+
+
+
+gsndvi_df <- paper3_data_no_2018 %>% 
+  filter(Platform == "GreenSeeker_NDVI") #filter just gs ndvi values
+
+gs_ndvi_lm <- lm(Index ~ PI_N_Uptake, data = gsndvi_df) #linear model
+summary(gs_ndvi_lm) #r2 = 0.64
+gs_ndvi_sm <- segmented(gs_ndvi_lm , seg.Z = ~ PI_N_Uptake) #segmented model
+summary(gs_ndvi_sm) #r2 = 0.81 , breakpoint = 84.827
+gs_ndvi_bp <- 84.827 #assigns breakpoint to object
+gs_ndvi_fit <- fitted(gs_ndvi_sm) #gets fitted values
+gs_ndvi_sm_df <- data.frame(gsndvi_df$PI_N_Uptake , gs_ndvi_fit) #creates dataframe
+
+PI_N_Uptake2 <- gsndvi_df$PI_N_Uptake^2
+gs_ndvi_qm <- lm(Index ~ PI_N_Uptake + PI_N_Uptake2 , gsndvi_df) #quadratic model
+summary(gs_ndvi_qm) #r2 = 0.80
+
+gs_ndvi_fit_qm <- fitted(gs_ndvi_qm) #gets fitted values from quad model
+gs_ndvi_qm_df <- data.frame(gsndvi_df$PI_N_Uptake , gs_ndvi_fit_qm) #creates dataframe
+gs_ndvi_qm_df <- gs_ndvi_qm_df %>% 
+  mutate(Platform = "GreenSeeker_NDVI")
+
+gs_ndvi_qm_r2 <- round(summary(gs_ndvi_qm)$adj.r.squared , digits = 2)
+gs_ndvi_qm_a <- as.numeric(as.character(coef(gs_ndvi_qm)[3]))
+gs_ndvi_qm_b <- as.numeric(as.character(coef(gs_ndvi_qm)[2]))
+gs_ndvi_qm_c <- as.numeric(as.character(coef(gs_ndvi_qm)[1]))
+gs_ndvi_qm_sym_x <- (-gs_ndvi_qm_b) / (2*gs_ndvi_qm_a)
+gs_ndvi_qm_sym_y <- gs_ndvi_qm_a*(gs_ndvi_qm_sym_x^2) + gs_ndvi_qm_b*gs_ndvi_qm_sym_x + gs_ndvi_qm_c
+
+gs_ndvi_qm_eqn <- paste("y == -0.0000158*x^2 + 0.0059* x + 0.24")
+
+gs_ndvi_qm_r2
+gs_ndvi_qm_sym_y
+
+```
+
+##models for drone ndvi
+
+```{r}
+
+
+
+sUASndvi_df <- paper3_data_no_2018 %>% 
+  filter(Platform == "sUAS_NDVI") #filter just sUAS ndvi values
+
+sUAS_ndvi_lm <- lm(Index ~ PI_N_Uptake, data = sUASndvi_df) #linear model
+summary(sUAS_ndvi_lm) #r2 = 0.60
+sUAS_ndvi_sm <- segmented(sUAS_ndvi_lm , seg.Z = ~ PI_N_Uptake) #segmented model
+summary(sUAS_ndvi_sm) #r2 = 0.82 , breakpoint = 85.083
+sUAS_ndvi_bp <- 85.083
+sUAS_ndvi_fit <- fitted(sUAS_ndvi_sm) #gets fitted values
+sUAS_ndvi_sm_df <- data.frame(sUASndvi_df$PI_N_Uptake , sUAS_ndvi_fit) #creates dataframe
+
+PI_N_Uptake2 <- sUASndvi_df$PI_N_Uptake^2
+sUAS_ndvi_qm <- lm(Index ~ PI_N_Uptake + PI_N_Uptake2 , sUASndvi_df) #quadratic model
+summary(sUAS_ndvi_qm) #r2 = 0.78
+
+sUAS_ndvi_fit_qm <- fitted(sUAS_ndvi_qm) #gets fitted values from quad model
+sUAS_ndvi_qm_df <- data.frame(sUASndvi_df$PI_N_Uptake , sUAS_ndvi_fit_qm) #creates dataframe
+
+sUAS_ndvi_qm_df <- sUAS_ndvi_qm_df %>% 
+  mutate(Platform = "sUAS_NDVI")
+
+#getting the equation for the plot
+sUAS_ndvi_qm_r2 <- round(summary(sUAS_ndvi_qm)$adj.r.squared , digits = 2)
+sUAS_ndvi_qm_a <- as.numeric(as.character(coef(sUAS_ndvi_qm)[3]))
+sUAS_ndvi_qm_b <- as.numeric(as.character(coef(sUAS_ndvi_qm)[2]))
+sUAS_ndvi_qm_c <- as.numeric(as.character(coef(sUAS_ndvi_qm)[1]))
+sUAS_ndvi_qm_sym_x <- (-sUAS_ndvi_qm_b) / (2*sUAS_ndvi_qm_a)
+sUAS_ndvi_qm_sym_y <- sUAS_ndvi_qm_a*(sUAS_ndvi_qm_sym_x^2) + sUAS_ndvi_qm_b*sUAS_ndvi_qm_sym_x + sUAS_ndvi_qm_c
+
+sUAS_ndvi_qm_eqn <- paste("y == -0.0000088*x^2 + 0.0030* x + 0.69")
+
+sUAS_ndvi_qm_r2
+sUAS_ndvi_qm_sym_y
+```
+
+##models for drone ndre
+
+```{r}
+
+
+sUASndre_df_with2018 <- paper3_data %>% 
+  filter(Platform == "sUAS_NDRE") #filter just sUAS ndre values
+
+sUASndre_df <- paper3_data_no_2018 %>% 
+  filter(Platform == "sUAS_NDRE") #filter just sUAS ndre values
+
+sUAS_ndre_lm <- lm(Index ~ PI_N_Uptake, data = sUASndre_df) #linear model
+summary(sUAS_ndre_lm) #r2 = 0.73
+sUAS_ndre_sm <- segmented(sUAS_ndre_lm , seg.Z = ~ PI_N_Uptake) #segmented model
+summary(sUAS_ndre_sm) #r2 = 0.79 , breakpoint = 91.056
+sUAS_ndre_fit <- fitted(sUAS_ndre_sm) #gets fitted values
+sUAS_ndre_sm_df <- data.frame(sUASndre_df$PI_N_Uptake , sUAS_ndre_fit) #creates dataframe
+
+PI_N_Uptake2 <- sUASndre_df$PI_N_Uptake^2
+sUAS_ndre_qm <- lm(Index ~ PI_N_Uptake + PI_N_Uptake2 , sUASndre_df) #quadratic model
+summary(sUAS_ndre_qm) #r2 = 0.80
+
+sUAS_ndre_fit_lm <- fitted(sUAS_ndre_lm) #gets fitted values from linear model
+sUAS_ndre_lm_df <- data.frame(sUASndre_df$PI_N_Uptake , sUAS_ndre_fit_lm) #creates dataframe
+
+sUAS_ndre_lm_df <- sUAS_ndre_lm_df %>% 
+  mutate(Platform = "sUAS_NDRE")
+  
+
+#getting the equation for the plot
+sUAS_ndre_lm_r2 <- round(summary(sUAS_ndre_lm)$adj.r.squared , digits = 2)
+sUAS_ndre_lm_b <- as.numeric(as.character(coef(sUAS_ndre_lm)[1]))
+sUAS_ndre_lm_m <- as.numeric(as.character(coef(sUAS_ndre_lm)[2]))
+
+sUAS_ndre_lm_eqn <- paste("y == 0.0022* x + 0.38")
+
+sUAS_ndre_lm_r2
+```
+
+##linear model b/a bp
+
+###gs ndvi
+```{r}
+
+#here, i'm going to remove data before the breakpoint for each segmented model (based on platform) , then develop a simple linear model for the separate linear segments and test for their significance
+
+paper3_data_gs_b4_bp <- paper3_data_no_2018 %>% 
+  filter(Platform == "GreenSeeker_NDVI" & PI_N_Uptake < gs_ndvi_bp) #gs ndvi data before breakpoint
+
+paper3_data_gs_aft_bp <- paper3_data_no_2018 %>% 
+  filter(Platform == "GreenSeeker_NDVI" & PI_N_Uptake >= gs_ndvi_bp) #gs ndvi data after breakpoint
+
+gs_ndvi_lm_aft_bp <- lm ( Index ~ PI_N_Uptake , data = paper3_data_gs_aft_bp) #lm after breakpoint for gs ndvi
+summary(gs_ndvi_lm_aft_bp)
+
+ggplotRegression <- function (fit) {
+
+ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "red") +
+  labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 5),
+                     "Intercept =",signif(fit$coef[[1]],5 ),
+                     " Slope =",signif(fit$coef[[2]], 5),
+                     " P =",signif(summary(fit)$coef[2,4], 5)))
+} #this is a function I found online to quickly plot lm models and data. this is awesome!
+
+ggplotRegression(gs_ndvi_lm_aft_bp) #plot the gs ndvi data and lm after the breakpoint
+
+
+
+```
+
+###uas ndvi
+
+```{r}
+
+paper3_data_uas_ndvi_b4_bp <- paper3_data_no_2018 %>% 
+  filter(Platform == "sUAS_NDVI" & PI_N_Uptake < sUAS_ndvi_bp) #drone ndvi data before breakpoint
+
+paper3_data_uas_ndvi_aft_bp <- paper3_data_no_2018 %>% 
+  filter(Platform == "sUAS_NDVI" & PI_N_Uptake >= sUAS_ndvi_bp) #drone ndvi data after breakpoint
+
+uas_ndvi_lm_aft_bp <- lm ( Index ~ PI_N_Uptake , data = paper3_data_uas_ndvi_aft_bp) #lm after breakpoint for drone ndvi
+summary(uas_ndvi_lm_aft_bp)
+
+ggplotRegression(uas_ndvi_lm_aft_bp) #plot the data and lm
+
+#the segmented model for drone ndvi is significantly positive after the breakpoint as well. Analyzing the data in this way won't work. 
+
+```
+
+
+##PI Nup ~ Index Segmented Models
+
+```{r}
+
+gs_ndvi_sm_r2 <- paste("(R^2)[GS~NDVI] == 0.82")
+sUAS_ndvi_sm_r2 <- paste("(R^2)[sUAS~NDVI] == 0.82")
+sUAS_ndre_sm_r2 <- paste("(R^2)[sUAS~NDRE] == 0.79")
+
+Nup_fig_seg <- 
+  ggplot( data = paper3_data_no_2018 , aes ( x = PI_N_Uptake , y = Index )) +
+  geom_point( mapping = aes( x = PI_N_Uptake , 
+                             y = Index , 
+                             shape = Platform) ,
+  geom_line(data = gs_ndvi_sm_df , aes(x = gsndvi_df$PI_N_Uptake , y = gs_ndvi_fit ), size = 2 , color = "#F8766D") +
+  annotate("text", x = 200, y = .2, label = gs_ndvi_sm_r2, color="black", size = 8, parse = TRUE) #adds gs ndvi segmented model
+
+Nup_fig_seg <- Nup_fig_seg +
+  geom_line(data = sUAS_ndvi_sm_df , aes(x = sUASndvi_df$PI_N_Uptake , y = sUAS_ndvi_fit ), size = 2 , color = "#619CFF") +
+  annotate("text", x = 200, y = .3, label = sUAS_ndvi_sm_r2, color="black", size = 8, parse = TRUE) #adds sUAS NDVI segmented model
+
+Nup_fig_seg <- Nup_fig_seg +
+  geom_line(data = sUAS_ndre_sm_df , aes(x = sUASndre_df$PI_N_Uptake , y = sUAS_ndre_fit ), size = 2 , color = "#00BA38") +
+  annotate("text", x = 200, y = .4, label = sUAS_ndre_sm_r2, color="black", size = 8, parse = TRUE) #adds sUAS NDRE segmented model
+
+Nup_fig_seg
+
+ggsave("FIGURES/NOT_IN_PUBLICATION/Nup_Index_fig_seg_models.tiff" , Nup_fig_seg , compression = "lzw" , width = 15 , height = 10, type = "cairo" , dpi = 500)
+```
+
+##PI Nup ~ Index Lin Models
+
+
+```{r}
+
+platform <- data.frame( 
+  label = c("GreenSeeker~NDVI" ,
+            "UAS~NDRE" ,
+            "UAS~NDVI") ,
+  Platform = c("GreenSeeker_NDVI" ,
+            "sUAS_NDRE" ,
+            "sUAS_NDVI"),
+  x_position = c(Inf , Inf , Inf ),
+  x_just_var = c(1.35 , 1.5 , 1.75) ,
+  y_position = c(-Inf , -Inf , -Inf ),
+  y_just_var = c(-15 , -15 , -15)
+  )
+
+equation <- data.frame( 
+  label = c(gs_ndvi_qm_eqn,
+            sUAS_ndre_lm_eqn ,
+            sUAS_ndvi_qm_eqn) ,
+  Platform = c("GreenSeeker_NDVI" ,
+            "sUAS_NDRE" ,
+            "sUAS_NDVI"),
+  x_position = c(Inf , Inf , Inf ),
+  x_just_var = c(1.05 , 1.15 , 1.05) ,
+  y_position = c(-Inf , -Inf , -Inf ),
+  y_just_var = c(-8 , -10.75 , -8)
+  )
+
+rsquared <- data.frame( 
+  label = c("R^2 == 0.81",
+            "R^2 == 0.73" ,
+            "R^2 == 0.78") ,
+  Platform = c("GreenSeeker_NDVI" ,
+            "sUAS_NDRE" ,
+            "sUAS_NDVI"),
+  x_position = c(Inf , Inf , Inf ),
+  x_just_var = c(2.25 , 1.8 , 2) ,
+  y_position = c(-Inf , -Inf , -Inf ),
+  y_just_var = c(-8.5 , -8.6 , -8.5)
+  )
+
+asymptote <- data.frame( 
+  label = c("asym == 0.79",
+            NA ,
+            "asym == 0.93") ,
+  Platform = c("GreenSeeker_NDVI" ,
+            "sUAS_NDRE" ,
+            "sUAS_NDVI"),
+  x_position = c(Inf , NA , Inf ),
+  x_just_var = c(1.85 , NA , 1.65) ,
+  y_position = c(-Inf , NA , -Inf ),
+  y_just_var = c(-7.75 , NA , -7.75)
+  )
+
+Nup_fig_lin <- Nup_fig +
+  geom_line(data = subset(gs_ndvi_qm_df , Platform == "GreenSeeker_NDVI") , aes(x = gsndvi_df$PI_N_Uptake , y = gs_ndvi_fit_qm ) , size = 1.25 , color = "#3366FF") +
+  geom_hline(data = data.frame(yint = gs_ndvi_qm_sym_y , Platform = "GreenSeeker_NDVI") , aes(yintercept = yint) , size = 1 , color = "black" , lty = 2) +
+  geom_line(data = subset(sUAS_ndvi_qm_df , Platform == "sUAS_NDVI"), aes(x = sUASndvi_df$PI_N_Uptake , y = sUAS_ndvi_fit_qm ),  size = 1.25  , color = "#3366FF") +
+  geom_hline( data = data.frame(yint = sUAS_ndvi_qm_sym_y , Platform = "sUAS_NDVI") , aes(yintercept = yint ) , size = 1 , color = "black" , lty = 2) +
+  geom_line(data = subset(sUAS_ndre_lm_df , Platform == "sUAS_NDRE") , aes(x = sUASndre_df$PI_N_Uptake , y = sUAS_ndre_fit_lm ),  size = 1.25 , color = "#3366FF") +
+  geom_text( data = platform ,
+             mapping = aes( x = x_position ,
+                            hjust = x_just_var , 
+                            y = y_position , 
+                            vjust = y_just_var , 
+                            label = label) , 
+             size = 6 ,
+             parse = T) +
+  geom_text( data = equation ,
+             mapping = aes( x = x_position ,
+                            hjust = x_just_var , 
+                            y = y_position , 
+                            vjust = y_just_var , 
+                            label = label) , 
+             size = 6 ,
+             parse = T) +
+  geom_text( data = rsquared ,
+             mapping = aes( x = x_position ,
+                            hjust = x_just_var , 
+                            y = y_position , 
+                            vjust = y_just_var , 
+                            label = label) , 
+             size = 6 ,
+             parse = T) +
+  geom_text( data = asymptote ,
+             mapping = aes( x = x_position ,
+                            hjust = x_just_var , 
+                            y = y_position , 
+                            vjust = y_just_var , 
+                            label = label) , 
+             size = 6 ,
+             parse = T)
+
+Nup_fig_lin
+
+ggsave("FIGURES/Paper3_Fig_2.tiff" , Nup_fig_lin , compression = "lzw" , width = 19 , height = 9.5, type = "cairo" , dpi = 500)
+
+```
+
+#MODEL
+
+```{r}
+
+  
+ctrl <- lmeControl(opt = "optim") #changes control to "optimal" settings
+
+model <- lme(GrainYield_Mgha ~ SI * TopDress_kgha * Platform + I(SI*SI)  ,
+             control = ctrl ,
+             random = ~ I(TopDress_kgha) | site_year  , 
+             data = paper3_data_no_2018)
+
+summary(model)
+
+summary(model)$tTable
+
+Anova(model , type = 3)
+
+r.squaredGLMM(model)
+
+```
+
+## model diagnostics
+
+```{r}
+
+plot (model)
+
+plot(resid(model, type = "normalized") ~fitted(model))
+
+model_y <- resid(model, type = "normalized")
+model_x <- fitted(model)
+
+modelresid_data <- data.frame(model_x , model_y)
+
+ggplot( data = modelresid_data , aes( x = model_x , y = model_y)) +
+  geom_point(mapping = aes(model_x , model_y) , data = modelresid_data)
+
+hist(resid(model))
+
+
+plot(model, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(model, abline = c(0,1) )
+
+
+qqnorm(resid(model))
+qqline(resid(model))
+
+
+qqnorm(model , ~resid(.) | site_year)
+
+plot(ranef(model))
+
+pairs(model , id = 0.1) #there is a strong correlation between the two random effects so thats not very good
+
+qqnorm(model , ~ranef(.))
+
+plot( model, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+##outlier removal 
+
+```{r}
+
+paper3_data_no_2018_OR <- paper3_data_no_2018[-(c(which(abs(residuals(model,type="normalized"))>qnorm(0.999)))),]
+
+```
+
+##re run model sans outliers
+```{r}
+
+model <- lme(GrainYield_Mgha ~ SI * TopDress_kgha * Platform + I(SI*SI) ,
+             control = ctrl ,
+             random = ~ I(TopDress_kgha) | site_year , 
+             data = paper3_data_no_2018_OR)
+
+summary(model)
+
+summary(model)$tTable
+
+Anova(model , type = 3)
+
+r.squaredGLMM(model)
+
+```
+
+## model diagnostics
+
+```{r}
+
+plot (model)
+
+plot(resid(model, type = "normalized") ~fitted(model))
+
+model_y <- resid(model, type = "normalized")
+model_x <- fitted(model)
+
+modelresid_data <- data.frame(model_x , model_y)
+
+ggplot( data = modelresid_data , aes( x = model_x , y = model_y)) +
+  geom_point(mapping = aes(model_x , model_y) , data = modelresid_data)
+
+hist(resid(model))
+
+
+plot(model, site_year ~ resid(.), abline = 0)
+
+
+qqnorm(model, abline = c(0,1) )
+
+
+qqnorm(resid(model))
+qqline(resid(model))
+
+
+qqnorm(model , ~resid(.) | site_year)
+
+plot(ranef(model))
+
+pairs(model , id = 0.1) #there is a strong correlation between the two random effects so thats not very good
+
+qqnorm(model , ~ranef(.))
+
+plot( model, resid(., type = "p") ~ fitted(.) | site_year,
+      id = 0.05, adj = -0.3 )
+
+```
+
+##emmeans
+
+```{r}
+
+mylist <- list(SI = seq(0.20 , 1 , by = .0005), 
+               TopDress_kgha = c(34 , 0) ,
+               Platform = "GreenSeeker_NDVI")
+
+gs_emmeans <- emmeans(model , ~ SI * TopDress_kgha | Platform , at = mylist)
+
+gs_contrast_df <- as.data.frame(summary(contrast(gs_emmeans , "pairwise" , side = ">" , by = "SI")))
+
+gs_contrast_df$p.value <- round(gs_contrast_df$p.value , 4)
+
+gs_contrast_df <- gs_contrast_df %>% 
+  mutate(RI = 1 / SI )
+
+gs_contrast_df <- gs_contrast_df %>% 
+  mutate(prob_postive_resp = (1 - p.value) *100 ,
+         Platform = "GreenSeeker_NDVI")
+
+mylist <- list(SI = seq(0.70 , 1 , by = .0005), 
+               TopDress_kgha = c(34 , 0) ,
+               Platform = "sUAS_NDVI")
+
+sUAS_NDVI_emmeans <- emmeans(model , ~ SI * TopDress_kgha | Platform , at = mylist)
+
+sUAS_NDVI_contrast_df <- as.data.frame(summary(contrast(sUAS_NDVI_emmeans , "pairwise" , side = ">" , by = "SI")))
+
+sUAS_NDVI_contrast_df$p.value <- round(sUAS_NDVI_contrast_df$p.value , 4)
+
+sUAS_NDVI_contrast_df <- sUAS_NDVI_contrast_df %>% 
+  mutate( RI = 1 / SI )
+
+sUAS_NDVI_contrast_df <- sUAS_NDVI_contrast_df %>% 
+  mutate(prob_postive_resp = (1 - p.value) *100,
+         Platform = "sUAS_NDVI")
+
+mylist <- list(SI = seq(0.50 , 1 , by = .0005), 
+               TopDress_kgha = c( 34 , 0) ,
+               Platform = "sUAS_NDRE") #the min sUAS NDRE SI value taken from the data frame
+
+sUAS_NDRE_emmeans <- emmeans(model , ~ SI * TopDress_kgha | Platform , at = mylist)
+
+sUAS_NDRE_contrast_df <- as.data.frame(summary(contrast(sUAS_NDRE_emmeans , "pairwise" , side = ">" , by = "SI")))
+
+sUAS_NDRE_contrast_df$p.value <- round(sUAS_NDRE_contrast_df$p.value , 4)
+
+sUAS_NDRE_contrast_df <- sUAS_NDRE_contrast_df %>% 
+  mutate(RI = 1 / SI )
+
+sUAS_NDRE_contrast_df <- sUAS_NDRE_contrast_df %>% 
+  mutate(prob_postive_resp = (1 - p.value) *100,
+         Platform = "sUAS_NDRE")
+
+```
+
+#PLOT
+
+```{r}
+
+p3_plot_1 <- ggplot( data = gs_contrast_df , aes ( x = RI , y = estimate )) +
+  theme_classic() +
+  theme(axis.title = element_text(size = 24)) +
+  theme(axis.text = element_text(size = 24)) +
+  theme(legend.text = element_text(size = 24)) +
+  theme(legend.title = element_text(size = 24)) +
+  coord_cartesian(ylim = c( 0, 2.5)) +
+  scale_x_continuous(breaks = c(1.000 ,
+                                2.000,
+                                3.000,
+                                4.000,
+                                5.000)) +
+  theme(panel.background = element_rect(fill = "white", color = "grey0")) +
+  labs(linetype = "Legend") +
+  geom_line(data = gs_contrast_df, aes( x = RI , y = estimate , linetype = "GreenSeeker NDVI" ), size = 1.5 , color = "#3366FF") +
+  geom_ribbon(data = gs_contrast_df , aes( y = estimate , ymax = (estimate + SE) , ymin = (estimate - SE) ) , alpha = 0.2) +
+    geom_line(data = sUAS_NDRE_contrast_df, aes( x = RI , y = estimate , linetype = "sUAS NDRE"  ), size = 1.5 , color = "#3366FF") +
+  geom_ribbon(data = sUAS_NDRE_contrast_df , aes( y = estimate , ymax = (estimate + SE) , ymin = (estimate - SE) ) , alpha = 0.2) +
+  geom_line(data = sUAS_NDVI_contrast_df, aes( x = RI , y = estimate , linetype = "sUAS NDVI" ), size = 1.5 , color = "#3366FF") +
+  geom_ribbon(data = sUAS_NDVI_contrast_df , aes( y = estimate , ymax = (estimate + SE) , ymin = (estimate - SE) ) , alpha = 0.2) +
+  theme(plot.title = element_text( face = "bold" , size = 16 , hjust = .5)) +
+  labs( x = NULL , y = NULL , linetype = NULL) +
+  theme(plot.background = element_rect(colour = "black", fill= "white", size=0.5)) +
+  scale_linetype_manual("Legend" , breaks = c("GreenSeeker NDVI" , "sUAS NDRE" , "sUAS NDVI" ) , values = c( "solid" , "longdash" , "dotdash")) +
+  theme(legend.position = "none")
+  
+
+p3_plot_1
+
+```
+
+```{r}
+p3_plot_2 <- ggplot( data = gs_contrast_df , aes ( x = RI , y = estimate )) +
+  theme_classic() +
+  coord_cartesian(xlim = c( 1, 2) , ylim = c(0, 2.5)) +
+  scale_x_continuous(breaks = c(1.000 ,
+                                1.1,
+                                1.2,
+                                1.3,
+                                1.4,
+                                1.5,
+                                1.6,
+                                1.7,
+                                1.8,
+                                1.9,
+                                2.0)) +
+  theme(panel.background = element_rect(fill = "white", color = "grey0")) +
+  labs(linetype = "Legend") +
+  geom_line(data = gs_contrast_df, aes( x = RI , y = estimate , linetype = "GreenSeeker NDVI" ), size = 2 , color = "#3366FF") +
+  geom_ribbon(data = gs_contrast_df , aes( y = estimate , ymax = (estimate + SE) , ymin = (estimate - SE) ) , alpha = 0.2) +
+    geom_line(data = sUAS_NDRE_contrast_df, aes( x = RI , y = estimate , linetype = "sUAS NDRE"  ), size = 2 , color = "#3366FF") +
+  geom_ribbon(data = sUAS_NDRE_contrast_df , aes( y = estimate , ymax = (estimate + SE) , ymin = (estimate - SE) ) , alpha = 0.2) +
+  geom_line(data = sUAS_NDVI_contrast_df, aes( x = RI , y = estimate , linetype = "sUAS NDVI" ), size = 2 , color = "#3366FF") +
+  geom_ribbon(data = sUAS_NDVI_contrast_df , aes( y = estimate , ymax = (estimate + SE) , ymin = (estimate - SE) ) , alpha = 0.2) +
+  theme(plot.title = element_text( face = "bold" , size = 16 , hjust = .5)) +
+  labs( x = "Response-Index" , y = "Estimated Grain Yield Response to Top-dress N ( Mg ha"^-1~")" , color = NULL) +
+  theme(plot.background = element_rect(colour = "black", fill= "white", size=0.5)) +
+  scale_linetype_manual("Legend" , breaks = c("GreenSeeker NDVI" , "sUAS NDRE" , "sUAS NDVI" ) , values = c( "solid" , "longdash" , "dotdash")) +
+  guides(linetype = guide_legend(keywidth = 5.5 , keyheight = 2.3 , unit = "cm" , override.aes = list(size = 2.55) , title.hjust = 0.5)) +
+  theme(legend.position = "bottom",
+        legend.text = element_text(size = 30),
+        legend.title = element_text(size = 30),
+        axis.title = element_text(size = 30),
+        axis.text = element_text(size = 30)) 
+  
+  
+
+p3_plot_2
+```
+
+
+#FIGURE 3
+
+```{r}
+
+Paper3_RI_fig <- ggdraw() +
+  draw_plot(p3_plot_2) +
+  draw_plot(p3_plot_1 , x = .692 , y = .135 , width = .3 , height = .3)
+
+ggsave("FIGURES/Paper3_Fig_4.tiff" , Paper3_RI_fig , compression = "lzw" , width = 21 , height = 13, type = "cairo" , dpi = 500)
+
+```
